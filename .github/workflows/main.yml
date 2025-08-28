@@ -36,5 +36,5 @@ jobs:
           build-args: |
             UID=1000
           tags: |
-            aimoon123/swarmui:latest
-            aimoon123/swarmui:${{ env.VERSION }}
+            xiuzhenpeng/swarmui:latest
+            xiuzhenpeng/swarmui:${{ env.VERSION }}

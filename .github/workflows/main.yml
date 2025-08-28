@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Docker image tag (例如 v1.0.0, 不填则默认 latest)"
+        description: "Docker image tag (例如 v1.0.0，不填则默认 latest)"
         required: false
         default: "latest"
 
@@ -36,5 +36,5 @@ jobs:
           build-args: |
             UID=1000
           tags: |
-            your-dockerhub-username/swarmui:latest
-            your-dockerhub-username/swarmui:${{ env.VERSION }}
+            aimoon123/swarmui:latest
+            aimoon123/swarmui:${{ env.VERSION }}

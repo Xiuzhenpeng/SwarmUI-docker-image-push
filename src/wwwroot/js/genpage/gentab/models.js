@@ -1,3 +1,19 @@
+/** Collection of helper functions and data related to models. */
+class ModelsHelpers {
+
+    constructor() {
+        this.imageBlockElem = getRequiredElementById('edit_model_image_block');
+        let imageHtml = makeImageInput(null, 'edit_model_image', null, 'Image', 'Image', true, false);
+        this.imageBlockElem.innerHTML = imageHtml;
+        this.imageElem = getRequiredElementById('edit_model_image');
+        this.enableImageElem = getRequiredElementById('edit_model_image_toggle');
+    }
+}
+
+/** Collection of helper functions and data related to models, just an instance of {@link ModelsHelpers}. */
+let modelsHelpers = new ModelsHelpers();
+
+//////////// TODO: Merge all the below into the class above (or multiple separate classes)
 
 let models = {};
 let cur_model = null;
@@ -129,25 +145,9 @@ function editModel(model, browser) {
     }
     curModelMenuModel = model;
     curModelMenuBrowser = browser;
-    let imageInput = getRequiredElementById('edit_model_image');
-    imageInput.innerHTML = '';
-    let enableImage = getRequiredElementById('edit_model_enable_image');
-    enableImage.checked = false;
-    enableImage.disabled = true;
-    let curImg = document.getElementById('current_image_img');
-    if (curImg && curImg.tagName == 'IMG') {
-        let newImg = curImg.cloneNode(true);
-        newImg.id = 'edit_model_image_img';
-        newImg.style.maxWidth = '100%';
-        newImg.style.maxHeight = '';
-        newImg.removeAttribute('width');
-        newImg.removeAttribute('height');
-        imageInput.appendChild(newImg);
-        if (!model.preview_image || model.preview_image == 'imgs/model_placeholder.jpg') {
-            enableImage.checked = true;
-        }
-        enableImage.disabled = false;
-    }
+    clearImageFileInput(modelsHelpers.imageElem);
+    modelsHelpers.enableImageElem.checked = false;
+    triggerChangeFor(modelsHelpers.enableImageElem);
     editModelFillTechnicalInfo(model);
     getRequiredElementById('edit_model_civitai_url').value = getCivitUrlGuessFor(model);
     getRequiredElementById('edit_model_civitai_info').innerText = '';
@@ -175,7 +175,20 @@ function editModel(model, browser) {
     getRequiredElementById('edit_model_lora_default_weight_div').style.display = model.architecture && model.architecture.endsWith('/lora') ? 'block' : 'none';
     getRequiredElementById('edit_model_lora_default_confinement').value = model.lora_default_confinement || '';
     getRequiredElementById('edit_model_lora_default_confinement_div').style.display = model.architecture && model.architecture.endsWith('/lora') ? 'block' : 'none';
-    $('#edit_model_modal').modal('show');
+    let run = () => {
+        triggerChangeFor(modelsHelpers.enableImageElem);
+        $('#edit_model_modal').modal('show');
+    };
+    let curImg = document.getElementById('current_image_img');
+    if (curImg && curImg.tagName == 'IMG') {
+        setImageFileDirect(modelsHelpers.imageElem, curImg.src, 'cur', 'cur', () => {
+            modelsHelpers.enableImageElem.checked = !model.preview_image || model.preview_image == 'imgs/model_placeholder.jpg';
+            run();
+        });
+    }
+    else {
+        run();
+    }
 }
 
 function edit_model_load_civitai() {
@@ -221,17 +234,10 @@ function edit_model_load_civitai() {
             }
         }
         if (img) {
-            let imageInput = getRequiredElementById('edit_model_image');
-            imageInput.innerHTML = '';
-            let newImg = document.createElement('img');
-            newImg.src = img;
-            newImg.id = 'edit_model_image_img';
-            newImg.style.maxWidth = '100%';
-            newImg.style.maxHeight = '';
-            imageInput.appendChild(newImg);
-            let enableImage = getRequiredElementById('edit_model_enable_image');
-            enableImage.checked = true;
-            enableImage.disabled = false;
+            setImageFileDirect(modelsHelpers.imageElem, img, 'cur', 'cur', () => {
+                modelsHelpers.enableImageElem.checked = true;
+                triggerChangeFor(modelsHelpers.enableImageElem);
+            });
         }
         info.innerText = 'Loaded.';
     }, curModelMenuModel.name, false);
@@ -265,15 +271,18 @@ function save_edit_model() {
         });
         $('#edit_model_modal').modal('hide');
     }
-    if (getRequiredElementById('edit_model_enable_image').checked) {
-        imageToData(getRequiredElementById('edit_model_image').getElementsByTagName('img')[0].src, (dataURL) => {
-            data['preview_image'] = dataURL;
-            complete();
-        }, true);
+    if (modelsHelpers.enableImageElem.checked) {
+        let imageVal = getInputVal(modelsHelpers.imageElem);
+        if (imageVal) {
+            data['preview_image_metadata'] = currentMetadataVal;
+            imageToData(imageVal, (dataURL) => {
+                data['preview_image'] = dataURL;
+                complete();
+            }, true);
+            return;
+        }
     }
-    else {
-        complete();
-    }
+    complete();
 }
 
 function cleanModelName(name) {
@@ -322,6 +331,9 @@ class ModelBrowserWrapper {
         this.browser = new GenPageBrowserClass(container, this.listModelFolderAndFiles.bind(this), id, format, this.describeModel.bind(this), this.selectModel.bind(this), extraHeader);
         this.promptBox = getRequiredElementById('alt_prompt_textbox');
         this.models = {};
+        this.browser.refreshHandler = (callback) => {
+            refreshParameterValues(true, subType == 'Wildcards' ? 'wildcards' : null, callback);
+        };
     }
 
     sortModelLocal(a, b, files) {
@@ -471,6 +483,21 @@ class ModelBrowserWrapper {
         this.browser.update();
     }
 
+    createCopyableTriggerPhrase(phrase) {
+        let copyPhrase = phrase;
+        if (getUserSetting('ui.copytriggerphrasewithtrailingcomma', false) && !phrase.endsWith(',')) {
+          copyPhrase += ', ';
+        }
+        let safePhrase = escapeHtmlNoBr(escapeJsString(phrase));
+        let safeCopyPhrase = escapeHtmlNoBr(escapeJsString(copyPhrase));
+        return `${safePhrase}<button title="Click to copy" class="basic-button trigger-phrase-copy-button" onclick="copyText('${safeCopyPhrase}');doNoticePopover('Copied!', 'notice-pop-green');">&#x29C9;</button>`;
+    }
+
+    formatTriggerPhrases(val) {
+        let phrases = val.split(';').map(phrase => phrase.trim()).filter(phrase => phrase.length > 0);
+        return phrases.map(phrase => this.createCopyableTriggerPhrase(phrase)).join('');
+    }
+
     describeModel(model) {
         let description = '';
         let buttons = [];
@@ -589,7 +616,10 @@ class ModelBrowserWrapper {
         }
         let searchableAdded = '';
         if (model.data.is_supported_model_format) {
-            let getLine = (label, val) => `<b>${label}:</b> <span>${val == null ? "(Unset)" : safeHtmlOnly(val)}</span><br>`;
+            let getLine = (label, val) => {
+                let content = val == null ? '(Unset)' : (label == 'Trigger Phrase' ? this.formatTriggerPhrases(val) : safeHtmlOnly(val));
+                return `<b>${label}:</b> <span>${content}</span><br>`;
+            };
             let getOptLine = (label, val) => val ? getLine(label, val) : '';
             if (this.subType == 'LoRA' || this.subType == 'Stable-Diffusion') {
                 interject += `${getLine("Resolution", `${model.data.standard_width}x${model.data.standard_height}`)}`;

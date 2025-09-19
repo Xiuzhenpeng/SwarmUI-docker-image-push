@@ -105,7 +105,7 @@ public class WorkflowGeneratorSteps
             {
                 (g.LoadingModel, g.LoadingClip) = g.LoadLorasForConfinement(1, g.LoadingModel, g.LoadingClip);
             }
-            else if (g.IsImageToVideoSwap && g.UserInput.Get(T2IParamTypes.Prompt, "").Contains("<videoswap"))
+            else if (g.IsImageToVideoSwap)
             {
                 (g.LoadingModel, g.LoadingClip) = g.LoadLorasForConfinement(T2IParamInput.SectionID_VideoSwap, g.LoadingModel, g.LoadingClip);
             }
@@ -193,6 +193,14 @@ public class WorkflowGeneratorSteps
             if (g.UserInput.Get(ComfyUIBackendExtension.UseCfgZeroStar, false))
             {
                 string patched = g.CreateNode("CFGZeroStar", new JObject()
+                {
+                    ["model"] = g.LoadingModel
+                });
+                g.LoadingModel = [patched, 0];
+            }
+            if (g.UserInput.Get(ComfyUIBackendExtension.UseTCFG, false))
+            {
+                string patched = g.CreateNode("TCFG", new JObject()
                 {
                     ["model"] = g.LoadingModel
                 });
@@ -316,6 +324,25 @@ public class WorkflowGeneratorSteps
                 else
                 {
                     Logs.Debug($"Ignore TeaCache Mode parameter because the current model is '{g.CurrentModelClass()?.Name ?? "(none)"}' which does not support TeaCache.");
+                }
+            }
+            if (g.UserInput.TryGet(ComfyUIBackendExtension.EasyCacheMode, out string easyCacheMode) && easyCacheMode != "disabled")
+            {
+                if (teaCacheMode == "base gen only" && g.LoadingModelType != "Base")
+                {
+                    // wrong step, skip
+                }
+                else if (g.IsVideoModel() || teaCacheMode != "video only")
+                {
+                    string teaCacheNode = g.CreateNode("EasyCache", new JObject()
+                    {
+                        ["model"] = g.LoadingModel,
+                        ["reuse_threshold"] = g.UserInput.Get(ComfyUIBackendExtension.EasyCacheThreshold, 0),
+                        ["start_percent"] = g.UserInput.Get(ComfyUIBackendExtension.EasyCacheStart, 0),
+                        ["end_percent"] = g.UserInput.Get(ComfyUIBackendExtension.EasyCacheEnd, 1),
+                        ["verbose"] = false
+                    });
+                    g.LoadingModel = [teaCacheNode, 0];
                 }
             }
         }, -4);
@@ -1787,6 +1814,8 @@ public class WorkflowGeneratorSteps
                     {
                         Generator = g,
                         VideoModel = extendModel,
+                        VideoSwapModel = g.UserInput.Get(T2IParamTypes.VideoExtendSwapModel, null),
+                        VideoSwapPercent = g.UserInput.Get(T2IParamTypes.VideoExtendSwapPercent, 0.5),
                         Frames = frames,
                         VideoCFG = cfg,
                         VideoFPS = videoFps,

@@ -36,8 +36,9 @@ public class ComfyUISelfStartBackend : ComfyUIAPIAbstractBackend
         [ManualSettingsOptions(Impl = null, Vals = ["Latest", "None", "LatestSwarmValidated", "Legacy"], ManualNames = ["Latest", "None", "Latest Swarm Validated", "Legacy (Pre Sept 2024)"])]
         public string FrontendVersion = "LatestSwarmValidated";
 
-        [ConfigComment("If checked, tells Comfy to generate image previews. If unchecked, previews will not be generated, and images won't show up until they're done.")]
-        public bool EnablePreviews = true;
+        [ConfigComment("Whether Comfy should generate image previews. If disabled, previews will not be generated, and images won't show up until they're done.\nRegular enabled mode uses 'latent2rgb' which is nearly instant at the cost of a lower accuracy of the preview.\nThe 'HD' enabled variant uses TAESD (Tiny Auto Encoder for Stable Diffusion), which uses a small VAE-like model to get more accurate previews, at the cost of slowing down generation to run this extra model each step.\nTAESD only works if architecture-specific compatible models are present (some are included by default).")]
+        [ManualSettingsOptions(Impl = null, Vals = ["false", "true", "taesd"], ManualNames = ["Disabled", "Enabled (fast latent2rgb)", "Enabled HD (slow TAESD)"])]
+        public string EnablePreviews = "true";
 
         [ConfigComment("Which GPU to use, if multiple are available.\nShould be a single number, like '0'.\nYou can use syntax like '0,1' to provide multiple GPUs to one backend (only applicable if you have custom nodes that can take advantage of this.)")]
         public string GPU_ID = "0";
@@ -282,7 +283,7 @@ public class ComfyUISelfStartBackend : ComfyUIAPIAbstractBackend
         return Process.Start(start);
     }
 
-    public static string SwarmValidatedFrontendVersion = "1.25.10";
+    public static string SwarmValidatedFrontendVersion = "1.26.11";
 
     public override async Task Init()
     {
@@ -303,9 +304,13 @@ public class ComfyUISelfStartBackend : ComfyUIAPIAbstractBackend
             {
                 addedArgs += " --fast fp16_accumulation cublas_ops"; // TODO: Temp due to fp8 mat mult being borked on Qwen Image
             }
-            if (Settings.EnablePreviews)
+            if (Settings.EnablePreviews == "true")
             {
                 addedArgs += " --preview-method latent2rgb";
+            }
+            else if (Settings.EnablePreviews == "taesd")
+            {
+                addedArgs += " --preview-method taesd";
             }
             if (Settings.FrontendVersion == "Latest")
             {
@@ -473,12 +478,21 @@ public class ComfyUISelfStartBackend : ComfyUIAPIAbstractBackend
                         ">=" => curVers < actualVers,
                         "<=" => curVers > actualVers,
                         "==" => curVers < actualVers,
+                        "force-eq" => curVers != actualVers,
                         _ => throw new ArgumentException($"Invalid version relation '{rel}' for package '{libFolder}' with version '{version}'.")
                     };
                 }
                 if (doUpdate)
                 {
-                    await update(libFolder, $"{pipName}{rel}{version}");
+                    if (rel == "force-eq")
+                    {
+                        await pipCall($"Remove old '{libFolder}'", $"uninstall -y {pipName}");
+                        await pipCall(libFolder, $"install {pipName}{rel}{version}");
+                    }
+                    else
+                    {
+                        await update(libFolder, $"{pipName}{rel}{version}");
+                    }
                 }
             }
             string frontendVersion = getVers("comfyui_frontend_package");
@@ -538,6 +552,16 @@ public class ComfyUISelfStartBackend : ComfyUIAPIAbstractBackend
             {
                 if (!libs.Contains("nunchaku") && numpyVers is not null && Version.Parse(numpyVers) > Version.Parse("2.0")) // Patch-hack because numpy v2 has incompatibilities with insightface
                 { // Note: sometimes 2+ is needed, so we carefully only remove for the first install of nunchaku, and allow it to be manually shifted back to 2+ after without undoing it
+                    if (libs.Contains("opencv_python_headless"))
+                    {
+                        await pipCall($"Remove opencv_python_headless", $"uninstall -y opencv_python_headless");
+                        await update("opencv_python_headless", "opencv_python_headless==4.11.0.86");
+                    }
+                    if (libs.Contains("opencv_python"))
+                    {
+                        await pipCall($"Remove opencv_python", $"uninstall -y opencv_python");
+                        await update("opencv_python", "opencv_python==4.11.0.86");
+                    }
                     await pipCall($"Remove numpy2+", $"uninstall -y numpy");
                     await update("numpy", "numpy==1.26.4");
                 }
@@ -569,13 +593,13 @@ public class ComfyUISelfStartBackend : ComfyUIAPIAbstractBackend
                     Logs.Error($"Nunchaku is not currently supported on your Torch version ({torchPipVers} not in range [2.5, 2.9]).");
                     isValid = false;
                 }
-                string nunchakuTargetVersion = "1.0.0.dev20250823"; string nunchakuRelName = "1.0.0dev20250823"; // they fucked up the url format omg
+                string nunchakuTargetVersion = "1.0.0";
                 // eg https://github.com/nunchaku-tech/nunchaku/releases/download/v0.3.2/nunchaku-0.3.2+torch2.5-cp310-cp310-linux_x86_64.whl
-                string url = $"https://github.com/nunchaku-tech/nunchaku/releases/download/v{nunchakuRelName}/nunchaku-{nunchakuTargetVersion}+torch{torchVers}-cp{pyVers}-cp{pyVers}-{osVers}.whl";
+                string url = $"https://github.com/nunchaku-tech/nunchaku/releases/download/v{nunchakuTargetVersion}/nunchaku-{nunchakuTargetVersion}+torch{torchVers}-cp{pyVers}-cp{pyVers}-{osVers}.whl";
                 if (isValid)
                 {
                     string nunchakuVers = getVers("nunchaku");
-                    if (nunchakuVers is not null && Version.Parse(nunchakuVers.Before(".dev")) < Version.Parse(nunchakuTargetVersion.Before(".dev")))
+                    if (nunchakuVers is not null && (Version.Parse(nunchakuVers.Before(".dev")) < Version.Parse(nunchakuTargetVersion.Before(".dev")) || nunchakuVers.Contains(".dev")))
                     {
                         await update("nunchaku", url);
                     }
@@ -634,7 +658,7 @@ public class ComfyUISelfStartBackend : ComfyUIAPIAbstractBackend
         ("av", "av", ">=", "14.2.0"),
         ("spandrel", "spandrel", ">=", "0.4.1"),
         ("transformers", "transformers", ">=", "4.37.2"),
-        ("ultralytics", "ultralytics", "==", "8.3.155"), // This is hard-pinned due to the malicious 8.3.41 incident, only manual updates when needed until security practices are improved.
+        ("ultralytics", "ultralytics", "==", "8.3.197"), // This is hard-pinned due to the malicious 8.3.41 incident, only manual updates when needed until security practices are improved.
         ("pip", "pip", ">=", "25.0") // Don't need latest, just can't be too old, this is mostly just here for a sanity check.
     ];
 
@@ -660,7 +684,7 @@ public class ComfyUISelfStartBackend : ComfyUIAPIAbstractBackend
 
     public override void PostResultCallback(string filename)
     {
-        string path =  $"{ComfyPathBase}/output/{filename}";
+        string path = $"{ComfyPathBase}/output/{filename}";
         Task.Run(() =>
         {
             if (File.Exists(path))

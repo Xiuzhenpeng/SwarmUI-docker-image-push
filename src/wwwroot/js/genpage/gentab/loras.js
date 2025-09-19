@@ -88,13 +88,13 @@ class LoraHelper {
         let loraInput = this.getLorasInput();
         let loraWeightsInput = this.getLoraWeightsInput();
         let loraConfinementInput = this.getLoraConfinementInput();
-        if (!loraInput || !loraWeightsInput || !loraConfinementInput) {
+        if (!loraInput || !loraWeightsInput) {
             this.rebuildUI();
             return;
         }
         let loraVals = this.getLoraParamSelections();
         let weightVals = loraWeightsInput.value.split(',');
-        let confinementVals = loraConfinementInput.value.split(',');
+        let confinementVals = loraConfinementInput ? loraConfinementInput.value.split(',') : [];
         for (let i = 0; i < loraVals.length; i++) {
             this.selected.push(new SelectedLora(loraVals[i], weightVals.length > i ? parseFloat(weightVals[i]) : null, confinementVals.length > i ? parseInt(confinementVals[i]) : null, null));
         }
@@ -124,12 +124,13 @@ class LoraHelper {
                 weightInput.max = weightsParam ? weightsParam.max : 10;
                 weightInput.step = weightsParam ? weightsParam.step : 0.1;
                 weightInput.value = lora.weight;
+                let getLora = () => this.selected.find(l => l.name == lora.name);
                 weightInput.addEventListener('change', () => {
-                    lora.setWeight(weightInput.value);
+                    getLora().setWeight(weightInput.value);
                     this.rebuildParams();
                 });
                 weightInput.addEventListener('input', () => {
-                    lora.setWeight(weightInput.value);
+                    getLora().setWeight(weightInput.value);
                     this.rebuildParams();
                 });
                 let confinementInput = document.createElement('select');
@@ -148,7 +149,7 @@ class LoraHelper {
                 }
                 fixSize();
                 confinementInput.addEventListener('change', () => {
-                    lora.setConfinement(confinementInput.value);
+                    getLora().setConfinement(confinementInput.value);
                     this.rebuildParams();
                     fixSize();
                 });
@@ -190,7 +191,7 @@ class LoraHelper {
         let loraInput = this.getLorasInput();
         let loraWeightsInput = this.getLoraWeightsInput();
         let loraConfinementInput = this.getLoraConfinementInput();
-        if (!loraInput || !loraWeightsInput || !loraConfinementInput) {
+        if (!loraInput || !loraWeightsInput) {
             return;
         }
         let loraVals = this.selected.map(l => l.name);
@@ -239,7 +240,7 @@ class LoraHelper {
                 triggerChangeFor(toggler);
             }
         }
-        if (loraConfinementInput.value != confinementStr) {
+        if (loraConfinementInput && loraConfinementInput.value != confinementStr) {
             loraConfinementInput.value = confinementStr;
             triggerChangeFor(loraConfinementInput);
             let toggler = document.getElementById('input_lorasectionconfinement_toggle');

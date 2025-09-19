@@ -341,7 +341,7 @@ public class Settings : AutoConfiguration
             [ConfigComment("Whether to store metadata into saved images.\nDefaults enabled.")]
             public bool SaveMetadata = true;
 
-            [ConfigComment("If not set to 'false', encodes metadata into the pixels of the image itself.\nThis can bypass services that strip normal metadata.\n'Alpha' uses the alpha channel. 'RGB' uses color channels.\nAlpha method Noticeably increases file size.\nCurrently only PNG is supported.")]
+            [ConfigComment("If not set to 'false', encodes metadata into the pixels of the image itself.\nThis can bypass services that strip normal metadata.\n'Alpha' uses the alpha channel. 'RGB' uses color channels.\nAlpha method Noticeably increases file size of PNG images, but not Webp.\nWebp and PNG are supported with the exception of lossy Webp with RGB stealth metadata.\nCurrently SwarmUI cannot read stealth metadata.")]
             [ManualSettingsOptions(Vals = ["false", "Alpha", "RGB"])]
             public string StealthMetadata = "false";
 
@@ -368,6 +368,9 @@ public class Settings : AutoConfiguration
 
             [ConfigComment("Comma-separated list of fields to display in the preset Details view.\nUse 'name' for the preset name, 'path' for the full preset path, 'description' for the description, or 'params' for the param list.\nIf unset, will act as 'path,description,params'")]
             public string PresetListDetailsFields = "";
+
+            [ConfigComment("If enabled, trigger phrases are copied with a trailing comma added.\nIf disabled, trigger phrases are copied as-is without any trailing comma.\nThis is useful when copying them to prompts.")]
+            public bool CopyTriggerPhraseWithTrailingComma = false;
         }
 
         [ConfigComment("Settings related to the user interface, entirely contained to the frontend.")]

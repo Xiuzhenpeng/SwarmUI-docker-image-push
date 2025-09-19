@@ -410,17 +410,19 @@ function genInputs(delay_final = false) {
                 doToggleGroup(`input_group_content_${group}`);
             }
         }
+        let dependsHandled = [];
         for (let param of gen_param_types) {
             if (param.toggleable) {
                 doToggleEnable(`input_${param.id}`);
                 doToggleEnable(`preset_input_${param.id}`);
             }
-            if (param.group && param.group.toggles) {
-                let elem = document.getElementById(`input_${param.id}`);
-                if (elem) {
-                    let groupId = param.group.id;
-                    let groupToggler = document.getElementById(`input_group_content_${groupId}_toggle`);
-                    if (groupToggler) {
+            let elem = document.getElementById(`input_${param.id}`);
+            if (elem) {
+                let group = param.group;
+                while (group) {
+                    let groupId = group.id;
+                    if (group.toggles) {
+                        let groupToggler = document.getElementById(`input_group_content_${groupId}_toggle`);
                         function autoActivate() {
                             groupToggler.checked = true;
                             doToggleGroup(`input_group_content_${groupId}`);
@@ -431,6 +433,17 @@ function genInputs(delay_final = false) {
                             elem.addEventListener('change', autoActivate);
                         }, 1);
                     }
+                    group = group.parent;
+                }
+            }
+            if (param.depend_non_default && !dependsHandled.includes(param.depend_non_default)) {
+                dependsHandled.push(param.depend_non_default);
+                let otherParam = gen_param_types.find(p => p.id == param.depend_non_default);
+                let other = document.getElementById(`input_${otherParam.id}`);
+                if (other) {
+                    other.addEventListener('change', () => {
+                        scheduleParamUnsupportUpdate();
+                    });
                 }
             }
         }
@@ -808,10 +821,6 @@ function genInputs(delay_final = false) {
         if (videoGroup && !currentBackendFeatureSet.includes('frameinterps')) {
             videoGroup.append(createDiv(`video_install_frameinterps`, 'keep_group_visible', `<button class="basic-button" onclick="installFeatureById('frame_interpolation', 'video_install_frameinterps')">Install Frame Interpolation</button>`));
         }
-        let advancedSamplingGroup = document.getElementById('input_group_content_advancedsampling');
-        if (advancedSamplingGroup && !currentBackendFeatureSet.includes('teacache')) {
-            advancedSamplingGroup.append(createDiv(`advancedsampling_install_teacache`, 'keep_group_visible', `<button class="basic-button" onclick="installFeatureById('teacache', 'advancedsampling_install_teacache')">Install TeaCache</button>`));
-        }
         for (let runnable of postParamBuildSteps) {
             runnable();
         }
@@ -941,8 +950,8 @@ function getGenInput(input_overrides = {}, input_preoverrides = {}) {
     return input;
 }
 
-function refreshParameterValues(strong = true, callback = null) {
-    genericRequest('TriggerRefresh', {strong: strong}, data => {
+function refreshParameterValues(strong = true, refreshType = null, callback = null) {
+    genericRequest('TriggerRefresh', {strong: strong, refreshType: refreshType}, data => {
         loadUserData();
         if (!gen_param_types) {
             return;
@@ -1084,6 +1093,7 @@ function resetParamsToDefault(exclude = [], doDefaultPreset = true) {
         if (param.id != 'model' && !exclude.includes(param.id)) {
             let id = `input_${param.id}`;
             let elem = document.getElementById(id);
+            doTrigger = true;
             if (elem != null) {
                 setDirectParamValue(param, param.default, elem, false, false);
                 if (param.toggleable) {
@@ -1095,18 +1105,26 @@ function resetParamsToDefault(exclude = [], doDefaultPreset = true) {
                     triggerChangeFor(toggler);
                     continue;
                 }
-                if (param.group && param.group.toggles) {
-                    let toggler = document.getElementById(`input_group_content_${param.group.id}_toggle`);
-                    if (toggler) {
-                        if (!toggler.checked) {
-                            continue;
+                let group = param.group;
+                while (group) {
+                    if (group.toggles) {
+                        let toggler = document.getElementById(`input_group_content_${group.id}_toggle`);
+                        if (toggler) {
+                            if (!toggler.checked) {
+                                doTrigger = false;
+                            }
+                            else {
+                                toggler.checked = false;
+                                doToggleGroup(`input_group_content_${group.id}`);
+                                doTrigger = false;
+                            }
                         }
-                        toggler.checked = false;
-                        doToggleGroup(`input_group_content_${param.group.id}`);
-                        continue;
                     }
+                    group = group.parent;
                 }
-                triggerChangeFor(elem);
+                if (doTrigger) {
+                    triggerChangeFor(elem);
+                }
             }
         }
     }
@@ -1156,10 +1174,6 @@ function hideUnsupportableParams() {
     let videoFrameInterpInstallButton = document.getElementById('video_install_frameinterps');
     if (videoFrameInterpInstallButton && currentBackendFeatureSet.includes('frameinterps')) {
         videoFrameInterpInstallButton.remove();
-    }
-    let teaCacheInstallButton = document.getElementById('advancedsampling_install_teacache');
-    if (teaCacheInstallButton && currentBackendFeatureSet.includes('teacache')) {
-        teaCacheInstallButton.remove();
     }
     let filter = getRequiredElementById('main_inputs_filter').value.toLowerCase();
     let hideUnaltered = filter.includes('<unaltered>');
@@ -1324,6 +1338,9 @@ function buildParameterList(params, groups) {
 
 /** Returns a copy of the parameter name, cleaned for ID format input. */
 function cleanParamName(name) {
+    if (name == null) {
+        return null;
+    }
     return name.toLowerCase().replaceAll(/[^a-z]/g, '');
 }
 

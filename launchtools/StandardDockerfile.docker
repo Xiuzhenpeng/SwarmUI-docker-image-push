@@ -12,6 +12,11 @@ RUN apt install -y libglib2.0-0 libgl1
 # Copy swarm's files into the docker container
 COPY . ./SwarmUI
 
+# Create u2net directory and download model
+RUN mkdir -p /SwarmUI/dlbackend/linuxhome/.u2net/ && \
+    wget -O /SwarmUI/dlbackend/linuxhome/.u2net/u2net.onnx \
+    https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx
+
 RUN chown -R $UID:$UID ./SwarmUI
 
 # Stupidproofing on git calls from inside docker

@@ -147,21 +147,22 @@ public class WebServer
         WebApp = builder.Build();
         WebApp.Use(async (context, next) =>
         {
-            if (context.Request.Headers.Host.Any() && context.Request.Headers.Origin.Any())
+            if (context.Request.Headers.Origin.Any())
             {
-                string host = context.Request.Headers.Host[0].ToLowerFast();
+                // 提取 Origin 头
                 string origin = context.Request.Headers.Origin[0].ToLowerFast();
-                Uri uri = new(origin);
-                string originMain = uri.Authority.ToLowerFast();
-                if (host != originMain)
+
+                // 添加 CORS 响应头，允许所有地址
+                context.Response.Headers.Add("Access-Control-Allow-Origin", "*"); // 允许所有来源
+                context.Response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS"); // 允许的 HTTP 方法
+                context.Response.Headers.Add("Access-Control-Allow-Headers", "Content-Type, Authorization"); // 允许的请求头
+
+                // 如果是预检请求（OPTIONS 方法），直接返回 200
+                if (context.Request.Method == "OPTIONS")
                 {
-                    // TODO: Instate this check fully only after comfy's version is stable.
-                    // Swarm doesn't technically need it (as we have session token checks) but still better to validate
-                    /*
-                    context.Response.StatusCode = 403;
-                    await context.Response.WriteAsync("Forbidden");
+                    context.Response.StatusCode = 200;
+                    await context.Response.WriteAsync("OK");
                     return;
-                    */
                 }
             }
             if (!string.IsNullOrWhiteSpace(Program.ServerSettings.Network.AccessControlAllowOrigin))

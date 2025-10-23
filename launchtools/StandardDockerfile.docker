@@ -29,6 +29,12 @@ RUN useradd -u $UID swarmui
 # Build inside the container later (so eg extensions are included properly).
 RUN rm -rf ./SwarmUI/src/bin ./SwarmUI/src/obj
 
+# 下载NuGet依赖至指定目录
+RUN mkdir -p /SwarmUI/dlbackend/linuxhome/.nuget/packages/
+RUN dotnet restore /SwarmUI/src/SwarmUI.csproj --no-cache \
+    --packages /SwarmUI/dlbackend/linuxhome/.nuget/packages/
+RUN chmod -R 777 /root/.nuget/
+
 # Expose the port for other containers (to use Swarm as an API if you want)
 EXPOSE 7801
 

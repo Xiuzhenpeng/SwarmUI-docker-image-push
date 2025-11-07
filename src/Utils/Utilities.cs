@@ -19,6 +19,7 @@ using SwarmUI.Text2Image;
 using System.Net.Sockets;
 using Microsoft.VisualBasic.FileIO;
 using Microsoft.AspNetCore.Cryptography.KeyDerivation;
+using SwarmUI.Media;
 
 namespace SwarmUI.Utils;
 
@@ -48,6 +49,17 @@ public static class Utilities
                 QuickGC();
             }
         };
+        if (Program.RequireControlPingEveryMS > 0)
+        {
+            Program.SlowTickEvent += () =>
+            {
+                if (Program.TimeLastRemoteControlPing + Program.RequireControlPingEveryMS < Environment.TickCount64)
+                {
+                    Logs.Error($"`require_control_within` is set, and a ping has not been received in the last {(Environment.TickCount64 - Program.TimeLastRemoteControlPing) / 1000} seconds, SwarmUI will now shut down due to lack of remote control.");
+                    Program.Shutdown();
+                }
+            };
+        }
         new Thread(TickLoop).Start();
     }
 
@@ -479,12 +491,12 @@ public static class Utilities
         return content;
     }
 
-    public static MultipartFormDataContent MultiPartFormContentDiscordImage(Image image, JObject jobj)
+    public static MultipartFormDataContent MultiPartFormContentDiscordFile(MediaFile file, JObject jobj)
     {
         MultipartFormDataContent content = [];
-        ByteArrayContent imageContent = new(image.ImageData);
-        imageContent.Headers.ContentType = new MediaTypeHeaderValue(image.MimeType());
-        content.Add(imageContent, "file", $"image.{image.Extension}");
+        ByteArrayContent fileContent = new(file.RawData);
+        fileContent.Headers.ContentType = new MediaTypeHeaderValue(file.Type.MimeType);
+        content.Add(fileContent, "file", $"image.{file.Type.Extension}");
         content.Add(JSONContent(jobj), "payload_json");
         return content;
     }

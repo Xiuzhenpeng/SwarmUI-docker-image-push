@@ -2,6 +2,7 @@
 using FreneticUtilities.FreneticToolkit;
 using Newtonsoft.Json.Linq;
 using SwarmUI.Core;
+using SwarmUI.Media;
 using SwarmUI.Text2Image;
 using SwarmUI.Utils;
 using System.IO;
@@ -182,6 +183,13 @@ public class WorkflowGenerator
         return clazz is not null && clazz == "flux-1";
     }
 
+    /// <summary>Returns true if the current model is AuraFlow.</summary>
+    public bool IsAuraFlow()
+    {
+        string clazz = CurrentCompatClass();
+        return clazz is not null && clazz == "auraflow-v1";
+    }
+
     /// <summary>Returns true if the current model is a Kontext model (eg Flux.1 Kontext Dev).</summary>
     public bool IsKontext()
     {
@@ -194,6 +202,13 @@ public class WorkflowGenerator
     {
         string clazz = CurrentCompatClass();
         return clazz is not null && clazz == "chroma";
+    }
+    
+    /// <summary>Returns true if the current model is Chroma Radiance.</summary>
+    public bool IsChromaRadiance()
+    {
+        string clazz = CurrentCompatClass();
+        return clazz is not null && clazz == "chroma-radiance";
     }
 
     /// <summary>Returns true if the current model is HiDream-i1.</summary>
@@ -242,6 +257,13 @@ public class WorkflowGenerator
     {
         string clazz = CurrentModelClass()?.ID;
         return clazz is not null && clazz.StartsWith("qwen-image-edit");
+    }
+
+    /// <summary>Returns true if the current model is Qwen Image Edit Plus.</summary>
+    public bool IsQwenImageEditPlus()
+    {
+        string clazz = CurrentModelClass()?.ID;
+        return clazz is not null && clazz.StartsWith("qwen-image-edit-plus");
     }
 
     /// <summary>Returns true if the current model is Hunyuan Video.</summary>
@@ -314,10 +336,16 @@ public class WorkflowGenerator
         return clazz is not null && clazz.StartsWith("wan-2_1-vace-");
     }
 
+    /// <summary>Returns true if the current model is any Wan variant.</summary>
+    public bool IsAnyWanModel()
+    {
+        return IsWanVideo() || IsWanVideo22();
+    }
+
     /// <summary>Returns true if the current main text input model model is a Video model (as opposed to image).</summary>
     public bool IsVideoModel()
     {
-        return IsLTXV() || IsMochi() || IsHunyuanVideo() || IsNvidiaCosmos1() || IsWanVideo() || IsWanVideo22();
+        return IsLTXV() || IsMochi() || IsHunyuanVideo() || IsNvidiaCosmos1() || IsAnyWanModel();
     }
 
     /// <summary>Gets a dynamic ID within a semi-stable registration set.</summary>
@@ -537,7 +565,7 @@ public class WorkflowGenerator
     }
 
     /// <summary>Creates a new node to load an image.</summary>
-    public string CreateLoadImageNode(Image img, string param, bool resize, string nodeId = null, int? width = null, int? height = null)
+    public string CreateLoadImageNode(ImageFile img, string param, bool resize, string nodeId = null, int? width = null, int? height = null)
     {
         if (nodeId is null && NodeHelpers.TryGetValue($"imgloader_{param}_{resize}", out string alreadyLoaded))
         {
@@ -546,7 +574,7 @@ public class WorkflowGenerator
         string result;
         if (Features.Contains("comfy_loadimage_b64") && !RestrictCustomNodes)
         {
-            if (img.Type == Image.ImageType.IMAGE)
+            if (img.Type.MetaType == MediaMetaType.Image)
             {
                 result = CreateNode("SwarmLoadImageB64", new JObject()
                 {
@@ -847,6 +875,10 @@ public class WorkflowGenerator
         {
             return requireClipModel("byt5_small_glyphxl_fp16.safetensors", "https://huggingface.co/Comfy-Org/HunyuanImage_2.1_ComfyUI/resolve/main/split_files/text_encoders/byt5_small_glyphxl_fp16.safetensors", "516910bb4c9b225370290e40585d1b0e6c8cd3583690f7eec2f7fb593990fb48", T2IParamTypes.T5XXLModel);
         }
+        string getPileT5XLAuraFlow()
+        {
+            return requireClipModel("pile_t5xl_auraflow.safetensors", "https://huggingface.co/fal/AuraFlow-v0.2/resolve/main/text_encoder/model.safetensors", "0a07449cf1141c0ec86e653c00465f6f0d79c6e58a2c60c8bcf4203d0e4ec4f6", T2IParamTypes.T5XXLModel);
+        }
         string getOmniQwenModel()
         {
             return requireClipModel("qwen_2.5_vl_fp16.safetensors", "https://huggingface.co/Comfy-Org/Omnigen2_ComfyUI_repackaged/resolve/main/split_files/text_encoders/qwen_2.5_vl_fp16.safetensors", "ba05dd266ad6a6aa90f7b2936e4e775d801fb233540585b43933647f8bc4fbc3", T2IParamTypes.QwenModel);
@@ -1080,7 +1112,7 @@ public class WorkflowGenerator
                     {
                         dtype = "default";
                     }
-                    else if (IsNvidiaCosmos2() || IsOmniGen() || IsChroma())
+                    else if (IsNvidiaCosmos2() || IsOmniGen() || IsChroma() || IsChromaRadiance())
                     {
                         dtype = "default";
                     }
@@ -1249,7 +1281,29 @@ public class WorkflowGenerator
             LoadingClip = [dualClipLoader, 0];
             doVaeLoader(UserInput.SourceSession?.User?.Settings?.VAEs?.DefaultFluxVAE, "flux-1", "flux-ae");
         }
-        else if (IsChroma())
+        else if (IsAuraFlow() && (LoadingClip is null || LoadingVAE is null || UserInput.Get(T2IParamTypes.T5XXLModel) is not null))
+        {
+            string loaderType = "CLIPLoader";
+            if (getPileT5XLAuraFlow().EndsWith(".gguf"))
+            {
+                loaderType = "CLIPLoaderGGUF";
+            }
+            string dualClipLoader = CreateNode(loaderType, new JObject()
+            {
+                ["clip_name"] = getPileT5XLAuraFlow(),
+                ["type"] = "chroma"
+            });
+            LoadingClip = [dualClipLoader, 0];
+            string t5Patch = CreateNode("T5TokenizerOptions", new JObject()
+            {
+                ["clip"] = LoadingClip,
+                ["min_padding"] = 768,
+                ["min_length"] = 768
+            });
+            LoadingClip = [t5Patch, 0];
+            doVaeLoader(UserInput.SourceSession?.User?.Settings?.VAEs?.DefaultSDXLVAE, "stable-diffusion-xl-v1", "sdxl-vae");
+        }
+        else if (IsChroma() || IsChromaRadiance())
         {
             string loaderType = "CLIPLoader";
             if (getT5XXLModel().EndsWith(".gguf"))
@@ -1265,11 +1319,24 @@ public class WorkflowGenerator
             string t5Patch = CreateNode("T5TokenizerOptions", new JObject() // TODO: This node is a temp patch
             {
                 ["clip"] = LoadingClip,
-                ["min_padding"] = 1,
+                ["min_padding"] = 0,
                 ["min_length"] = 0
             });
             LoadingClip = [t5Patch, 0];
-            doVaeLoader(UserInput.SourceSession?.User?.Settings?.VAEs?.DefaultFluxVAE, "flux-1", "flux-ae");
+            string samplingNode = CreateNode("ModelSamplingAuraFlow", new JObject()
+            {
+                ["model"] = LoadingModel,
+                ["shift"] = UserInput.Get(T2IParamTypes.SigmaShift, 1)
+            });
+            LoadingModel = [samplingNode, 0];
+            if (IsChromaRadiance())
+            {
+                LoadingVAE = CreateVAELoader("pixel_space");
+            }
+            else
+            {
+                doVaeLoader(UserInput.SourceSession?.User?.Settings?.VAEs?.DefaultFluxVAE, "flux-1", "flux-ae");
+            }
         }
         else if (IsHiDream())
         {
@@ -1509,7 +1576,7 @@ public class WorkflowGenerator
                 });
                 LoadingModel = [samplingNode, 0];
             }
-            else if (IsHunyuanVideo() || IsHunyuanImage() || IsWanVideo() || IsWanVideo22() || IsHiDream() || IsChroma())
+            else if (IsHunyuanVideo() || IsHunyuanImage() || IsWanVideo() || IsWanVideo22() || IsHiDream())
             {
                 string samplingNode = CreateNode("ModelSamplingSD3", new JObject()
                 {
@@ -1575,7 +1642,7 @@ public class WorkflowGenerator
                 ["samples"] = latent,
                 ["tile_size"] = UserInput.Get(T2IParamTypes.VAETileSize, 256),
                 ["overlap"] = UserInput.Get(T2IParamTypes.VAETileOverlap, 64),
-                ["temporal_size"] = UserInput.Get(T2IParamTypes.VAETemporalTileSize, 32),
+                ["temporal_size"] = UserInput.Get(T2IParamTypes.VAETemporalTileSize, IsAnyWanModel() ? 9999 : 32),
                 ["temporal_overlap"] = UserInput.Get(T2IParamTypes.VAETemporalTileOverlap, 4)
             }, id);
         }
@@ -1666,7 +1733,11 @@ public class WorkflowGenerator
         {
             defscheduler ??= "simple";
         }
-        bool willCascadeFix = false;
+        else if (IsChroma() || IsChromaRadiance())
+        {
+            defscheduler ??= "beta";
+        }
+            bool willCascadeFix = false;
         JArray cascadeModel = null;
         if (!rawSampler && IsCascade() && FinalLoadedModel.Name.Contains("stage_c") && Program.MainSDModels.Models.TryGetValue(FinalLoadedModel.Name.Replace("stage_c", "stage_b"), out T2IModel bModel))
         {
@@ -1757,7 +1828,7 @@ public class WorkflowGenerator
             JArray imgNeg = null;
             bool doLatentChain = !IsKontext(); // Arguably even kontext should just do this?
             bool onlyExplicit = IsQwenImage() && !IsQwenImageEdit();
-            if (IsOmniGen())
+            if (IsOmniGen() || IsQwenImageEditPlus())
             {
                 imgNeg = neg;
             }
@@ -1782,24 +1853,24 @@ public class WorkflowGenerator
             }
             if (UserInput.TryGet(T2IParamTypes.PromptImages, out List<Image> images) && images.Count > 0)
             {
-                img = GetFirstPromptImage(true);
+                img = GetPromptImage(true);
                 if (doLatentChain)
                 {
                     makeRefLatent(img);
                 }
                 for (int i = 1; i < images.Count; i++)
                 {
-                    string img2 = CreateLoadImageNode(images[i], "${promptimages." + i + "}", false);
+                    JArray img2 = GetPromptImage(true, false, i);
                     if (doLatentChain)
                     {
-                        makeRefLatent([img2, 0]);
+                        makeRefLatent(img2);
                     }
                     else
                     {
                         string stitched = CreateNode("ImageStitch", new JObject()
                         {
                             ["image1"] = img,
-                            ["image2"] = new JArray() { img2, 0 },
+                            ["image2"] = img2,
                             ["direction"] = "right",
                             ["match_image_size"] = true,
                             ["spacing_width"] = 0,
@@ -1845,6 +1916,10 @@ public class WorkflowGenerator
                         neg = imgNeg;
                     }
                 }
+                else if (IsQwenImageEditPlus())
+                {
+                    neg = imgNeg;
+                }
             }
         }
         else if (IsWanVideo()) // TODO: Somehow check if this is actually a phantom model?
@@ -1867,8 +1942,11 @@ public class WorkflowGenerator
                 double height = UserInput.GetImageHeight();
                 if (IsRefinerStage)
                 {
-                    width *= UserInput.Get(T2IParamTypes.RefinerUpscale, 1);
-                    height *= UserInput.Get(T2IParamTypes.RefinerUpscale, 1);
+                    double scale = UserInput.Get(T2IParamTypes.RefinerUpscale, 1);
+                    int iwidth = (int)Math.Round(width * scale);
+                    int iheight = (int)Math.Round(height * scale);
+                    width = (iwidth / 16) * 16;
+                    height = (iheight / 16) * 16;
                 }
                 // TODO: This node asking for latent info is wacky. Maybe have a reader node that grabs it from the current actual latent, so it's more plug-n-play-ish
                 string phantomNode = CreateNode("WanPhantomSubjectToVideo", new JObject()
@@ -2043,18 +2121,24 @@ public class WorkflowGenerator
     }
 
     /// <summary>Returns a reference to the first prompt image, if given. Null if not.</summary>
-    /// <param name="fixTo1024ish">If true, rescale the image to 1024-ish. If false, leave it as-is.</param>
-    public JArray GetFirstPromptImage(bool fixTo1024ish)
+    /// <param name="fixSize">If true, rescale the image an appropriate size. If false, leave it as-is.</param>
+    /// <param name="promptSize">If true, and fixSize is true, then use "prompt size" targets rather than latent size targets.</param>
+    /// <param name="index">Index of image to grab.</param>
+    public JArray GetPromptImage(bool fixSize, bool promptSize = false, int index = 0)
     {
-        if (UserInput.TryGet(T2IParamTypes.PromptImages, out List<Image> images) && images.Count > 0)
+        if (UserInput.TryGet(T2IParamTypes.PromptImages, out List<Image> images) && images.Count > index)
         {
-            string img1 = CreateLoadImageNode(images[0], "${promptimages.0}", false);
+            string img1 = CreateLoadImageNode(images[index], "${promptimages." + index + "}", false);
             JArray img = [img1, 0];
-            (int width, int height) = images[0].GetResolution();
+            (int width, int height) = images[index].GetResolution();
             int genWidth = UserInput.GetImageWidth(), genHeight = UserInput.GetImageHeight();
             int actual = (int)Math.Sqrt(width * height), target = (int)Math.Sqrt(genWidth * genHeight);
             bool doesFit = true;
-            if (IsKontext()) // Kontext needs <= target gen size, and is sufficient once input hits 1024.
+            if (!UserInput.Get(T2IParamTypes.SmartImagePromptResizing, true))
+            {
+                doesFit = Math.Abs(actual - target) <= 64;
+            }
+            else if (IsKontext()) // Kontext needs <= target gen size, and is sufficient once input hits 1024.
             {
                 if (target < 1024)
                 {
@@ -2069,12 +2153,17 @@ public class WorkflowGenerator
                     } // else does fit
                 }
             }
+            else if (IsQwenImageEditPlus() && promptSize)
+            {
+                target = 384;
+                doesFit = false;
+            }
             else if (IsQwenImage())
             {
                 target = 1024; // Qwen image targets 1328 for gen but wants 1024 inputs.
                 doesFit = Math.Abs(actual - target) <= 64;
             }
-            if (fixTo1024ish && !doesFit)
+            if (fixSize && !doesFit)
             {
                 (width, height) = Utilities.ResToModelFit(width, height, target * target);
                 string scaleFix = CreateNode("ImageScale", new JObject()
@@ -2116,24 +2205,33 @@ public class WorkflowGenerator
                 ["compression"] = UserInput.Get(T2IParamTypes.CascadeLatentCompression, 32)
             }, id);
         }
-        else
+        if (mask is not null && (UserInput.Get(T2IParamTypes.UseInpaintingEncode) || (CurrentModelClass()?.ID ?? "").EndsWith("/inpaint")))
         {
-            if (mask is not null && (UserInput.Get(T2IParamTypes.UseInpaintingEncode) || (CurrentModelClass()?.ID ?? "").EndsWith("/inpaint")))
-            {
-                return CreateNode("VAEEncodeForInpaint", new JObject()
-                {
-                    ["vae"] = vae,
-                    ["pixels"] = image,
-                    ["mask"] = mask,
-                    ["grow_mask_by"] = 6
-                }, id);
-            }
-            return CreateNode("VAEEncode", new JObject()
+            return CreateNode("VAEEncodeForInpaint", new JObject()
             {
                 ["vae"] = vae,
-                ["pixels"] = image
+                ["pixels"] = image,
+                ["mask"] = mask,
+                ["grow_mask_by"] = 6
             }, id);
         }
+        if (UserInput.TryGet(T2IParamTypes.VAETileSize, out _) || UserInput.TryGet(T2IParamTypes.VAETemporalTileSize, out _))
+        {
+            return CreateNode("VAEEncodeTiled", new JObject()
+            {
+                ["vae"] = vae,
+                ["pixels"] = image,
+                ["tile_size"] = UserInput.Get(T2IParamTypes.VAETileSize, 256),
+                ["overlap"] = UserInput.Get(T2IParamTypes.VAETileOverlap, 64),
+                ["temporal_size"] = UserInput.Get(T2IParamTypes.VAETemporalTileSize, IsAnyWanModel() ? 9999 : 32),
+                ["temporal_overlap"] = UserInput.Get(T2IParamTypes.VAETemporalTileOverlap, 4)
+            }, id);
+        }
+        return CreateNode("VAEEncode", new JObject()
+        {
+            ["vae"] = vae,
+            ["pixels"] = image
+        }, id);
     }
 
     /// <summary>Creates an Empty Latent Image node.</summary>
@@ -2229,6 +2327,15 @@ public class WorkflowGenerator
             {
                 ["batch_size"] = batchSize,
                 ["length"] = UserInput.Get(T2IParamTypes.Text2VideoFrames, 121),
+                ["height"] = height,
+                ["width"] = width
+            }, id);
+        }
+        else if (IsChromaRadiance())
+        {
+            return CreateNode("EmptyChromaRadianceLatentImage", new JObject()
+            {
+                ["batch_size"] = batchSize,
                 ["height"] = height,
                 ["width"] = width
             }, id);
@@ -2336,16 +2443,18 @@ public class WorkflowGenerator
         {
             string modelLoader = CreateNode("DownloadAndLoadGIMMVFIModel", new JObject()
             {
-                ["model"] = "gimmvfi_f_arb_lpips_fp32.safetensors"
+                ["model"] = "gimmvfi_f_arb_lpips_fp32.safetensors",
+                ["precision"] = "fp16",
+                ["torch_compile"] = false
             });
             string gimm = CreateNode("GIMMVFI_interpolate", new JObject()
             {
                 ["gimmvfi_model"] = new JArray() { modelLoader, 0 },
                 ["images"] = imageIn,
-                ["multiplier"] = mult,
-                ["ds_factor"] = 1,
+                ["ds_factor"] = 0.5, // TODO: They recommend this as a factor relative to size. 0.5 for 2k, 0.25 for 4k. This is a major performance alteration.
                 ["interpolation_factor"] = mult,
-                ["seed"] = 1
+                ["seed"] = 1,
+                ["output_flows"] = false
             });
             return [gimm, 0];
         }
@@ -3020,10 +3129,30 @@ public class WorkflowGenerator
                 ["text"] = prompt
             }, id);
         }
-        else if (IsQwenImageEdit() && isPositive && (qwenImage = GetFirstPromptImage(true)) is not null)
+        else if (IsQwenImageEdit() && (isPositive || IsQwenImageEditPlus()) && (qwenImage = GetPromptImage(true, true)) is not null)
         {
             if (wantsSwarmCustom)
             {
+                JArray image2 = GetPromptImage(true, true, 1);
+                if (IsQwenImageEditPlus() && image2 is not null)
+                {
+                    string batched = CreateNode("ImageBatch", new JObject()
+                    {
+                        ["image1"] = qwenImage,
+                        ["image2"] = image2
+                    });
+                    qwenImage = [batched, 0];
+                    JArray image3 = GetPromptImage(true, true, 2);
+                    if (image3 is not null)
+                    {
+                        string batched2 = CreateNode("ImageBatch", new JObject()
+                        {
+                            ["image1"] = qwenImage,
+                            ["image2"] = image3
+                        });
+                        qwenImage = [batched2, 0];
+                    }
+                }
                 node = CreateNode("SwarmClipTextEncodeAdvanced", new JObject()
                 {
                     ["clip"] = clip,
@@ -3035,6 +3164,19 @@ public class WorkflowGenerator
                     ["target_height"] = height,
                     ["guidance"] = UserInput.Get(T2IParamTypes.FluxGuidanceScale, defaultGuidance),
                     ["images"] = qwenImage,
+                    ["llama_template"] = "qwen_image_edit_plus"
+                }, id);
+            }
+            else if (IsQwenImageEditPlus())
+            {
+                node = CreateNode("TextEncodeQwenImageEditPlus", new JObject()
+                {
+                    ["clip"] = clip,
+                    ["prompt"] = prompt,
+                    ["vae"] = null, // Explicitly handled separately
+                    ["image1"] = qwenImage,
+                    ["image2"] = GetPromptImage(true, true, 1),
+                    ["image3"] = GetPromptImage(true, true, 2)
                 }, id);
             }
             else
@@ -3044,7 +3186,7 @@ public class WorkflowGenerator
                     ["clip"] = clip,
                     ["prompt"] = prompt,
                     ["vae"] = null, // Explicitly handled separately
-                    ["image"] = qwenImage,
+                    ["image"] = qwenImage
                 }, id);
             }
         }

@@ -1,11 +1,14 @@
-﻿using FreneticUtilities.FreneticExtensions;
-using FreneticUtilities.FreneticToolkit;
-using Newtonsoft.Json.Linq;
+﻿using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
 using SwarmUI.Accounts;
 using SwarmUI.Core;
 using SwarmUI.Media;
 using SwarmUI.Utils;
-using System.IO;
+using FreneticUtilities.FreneticExtensions;
+using FreneticUtilities.FreneticToolkit;
+using Newtonsoft.Json.Linq;
 
 namespace SwarmUI.Text2Image;
 
@@ -315,7 +318,7 @@ public class T2IParamTypes
     public static T2IRegisteredParam<double> CFGScale, VariationSeedStrength, InitImageCreativity, InitImageResetToNorm, InitImageNoise, RefinerControl, RefinerUpscale, RefinerCFGScale, ReVisionStrength, AltResolutionHeightMult,
         FreeUBlock1, FreeUBlock2, FreeUSkip1, FreeUSkip2, GlobalRegionFactor, EndStepsEarly, SamplerSigmaMin, SamplerSigmaMax, SamplerRho, VideoAugmentationLevel, VideoCFG, VideoMinCFG, Video2VideoCreativity, VideoSwapPercent, VideoExtendSwapPercent, IP2PCFG2, RegionalObjectCleanupFactor, SigmaShift, SegmentThresholdMax, SegmentCFGScale, FluxGuidanceScale;
     public static T2IRegisteredParam<Image> InitImage, MaskImage, VideoEndFrame;
-    public static T2IRegisteredParam<T2IModel> Model, RefinerModel, VAE, RegionalObjectInpaintingModel, SegmentModel, VideoModel, VideoSwapModel, RefinerVAE, ClipLModel, ClipGModel, ClipVisionModel, T5XXLModel, LLaVAModel, LLaMAModel, QwenModel, VideoExtendModel, VideoExtendSwapModel;
+    public static T2IRegisteredParam<T2IModel> Model, RefinerModel, VAE, RegionalObjectInpaintingModel, SegmentModel, VideoModel, VideoSwapModel, RefinerVAE, ClipLModel, ClipGModel, ClipVisionModel, T5XXLModel, LLaVAModel, LLaMAModel, QwenModel, MistralModel, VideoExtendModel, VideoExtendSwapModel;
     public static T2IRegisteredParam<List<string>> Loras, LoraWeights, LoraTencWeights, LoraSectionConfinement;
     public static T2IRegisteredParam<List<Image>> PromptImages;
     public static T2IRegisteredParam<bool> OutputIntermediateImages, DoNotSave, DoNotSaveIntermediates, ControlNetPreviewOnly, RevisionZeroPrompt, RemoveBackground, NoSeedIncrement, NoPreviews, VideoBoomerang, ModelSpecificEnhancements, UseInpaintingEncode, MaskCompositeUnthresholded, SaveSegmentMask, InitImageRecompositeMask, UseReferenceOnly, RefinerDoTiling, AutomaticVAE, ZeroNegative, Text2VideoBoomerang, FluxDisableGuidance, SmartImagePromptResizing,
@@ -403,8 +406,8 @@ public class T2IParamTypes
             "false", IgnoreIf: "false", OrderPriority: 20, Group: GroupText2Video, IsAdvanced: true, FeatureFlag: "text2video"
             ));
         List<string> videoFormats = ["webp", "gif", "gif-hd", "webm", "h264-mp4", "h265-mp4", "prores"];
-        Text2VideoFormat = Register<string>(new("Text2Video Format", "What format to save videos in.\nWebp video is ideal, but has compatibility issues. Gif is simple and compatible, while gif-hd is higher quality via ffmpeg.\nh264-mp4 is a standard video file that works anywhere, but doesn't get treated like an image file.\nh265-mp4 is a smaller file size but may not work for all devices.\nprores is a specialty format.",
-            "webp", GetValues: _ => videoFormats, OrderPriority: 21, Group: GroupText2Video, FeatureFlag: "text2video"
+        Text2VideoFormat = Register<string>(new("Text2Video Format", "What format to save videos in.\nWebp video is simple and efficient, but has compatibility issues. Gif is simple and compatible, while gif-hd is higher quality via ffmpeg.\nh264-mp4 is a standard video file that works anywhere, but doesn't get treated like an image file.\nh265-mp4 is a smaller file size but may not work for all devices.\nprores is a specialty format.",
+            "h264-mp4", GetValues: _ => videoFormats, OrderPriority: 21, Group: GroupText2Video, FeatureFlag: "text2video"
             ));
         // ================================================ Variation Seed ================================================
         GroupVariation = new("Variation Seed", Toggles: true, Open: false, OrderPriority: -17, Description: "Variation Seeds let you reuse a single seed, but slightly vary it according to a second seed and a weight value.\nThis technique results in creating images that are almost the same, but with small variations.\nUsing two static seeds and adjusting the strength can produce a smooth transition between two seeds.");
@@ -553,7 +556,7 @@ public class T2IParamTypes
             ));
         // ================================================ Image To Video ================================================
         GroupVideo = new("Image To Video", Open: false, OrderPriority: 0, Toggles: true, Description: $"Generate videos using models that take an image as their primary input.\n<a target=\"_blank\" href=\"{Utilities.RepoDocsRoot}/Video%20Model%20Support.md\">See more docs here.</a>");
-        static bool isVideoClass(string id) => id.Contains("stable-video-diffusion") || id.Contains("lightricks-ltx-video") || id.Contains("-video2world") || id.Contains("-i2v") || id.Contains("-ti2v") || id.Contains("-flf2v") || id.Contains("-image2video");
+        static bool isVideoClass(string id) => id.Contains("stable-video-diffusion") || id.Contains("lightricks-ltx-video") || id.Contains("-video2world") || id.Contains("-i2v") || id.Contains("-ti2v") || id.Contains("-flf2v") || id.Contains("-image2video") || id.Contains("hunyuan-video-1_5");
         VideoModel = Register<T2IModel>(new("Video Model", "The model to use for video generation.\nSelect an image-to-video conversion model, note that text-to-video models do not work.",
             "", GetValues: s => CleanModelList(Program.MainSDModels.ListModelsFor(s).Where(m => m.ModelClass is not null && isVideoClass(m.ModelClass.ID)).Select(m => m.Name)),
             OrderPriority: 1, Group: GroupVideo, Permission: Permissions.ParamVideo, FeatureFlag: "video", Subtype: "Stable-Diffusion", ChangeWeight: 9, DoNotPreview: true
@@ -583,8 +586,8 @@ public class T2IParamTypes
         Video2VideoCreativity = Register<double>(new("Video2Video Creativity", "Optional advanced method to start the video diffusion late.\nThis is equivalent to Init Image Creativity.\nSet below 1 to skip some fraction of steps.\nThis only makes sense if the base input is a video.\n'Video Frame's param must have same frame length as the input video.\nIf set to 1, video2video logic is not applied, and the input is treated as a single image.",
             "1", IgnoreIf: "1", Min: 0, Max: 1, Step: 0.05, OrderPriority: 19.5, ViewType: ParamViewType.SLIDER, Group: GroupVideo, Permission: Permissions.ParamVideo, FeatureFlag: "video", IsAdvanced: true, DoNotPreview: true
             ));
-        VideoFormat = Register<string>(new("Video Format", "What format to save videos in.\nWebp video is ideal, but has compatibility issues. Gif is simple and compatible, while gif-hd is higher quality via ffmpeg.\nh264-mp4 is a standard video file that works anywhere, but doesn't get treated like an image file.\nh265-mp4 is a smaller file size but may not work for all devices.\nprores is a specialty format.",
-            "webp", GetValues: _ => videoFormats, OrderPriority: 20, Group: GroupVideo, Permission: Permissions.ParamVideo, FeatureFlag: "video", DoNotPreview: true, ChangeWeight: -1
+        VideoFormat = Register<string>(new("Video Format", "What format to save videos in.\nWebp video is simple and efficient, but has compatibility issues. Gif is simple and compatible, while gif-hd is higher quality via ffmpeg.\nh264-mp4 is a standard video file that works anywhere, but doesn't get treated like an image file.\nh265-mp4 is a smaller file size but may not work for all devices.\nprores is a specialty format.",
+            "h264-mp4", GetValues: _ => videoFormats, OrderPriority: 20, Group: GroupVideo, Permission: Permissions.ParamVideo, FeatureFlag: "video", DoNotPreview: true, ChangeWeight: -1
             ));
         VideoEndFrame = Register<Image>(new("Video End Image", "An image to use as the 'end frame' of a video.\nOnly some models support end frames (Wan FLF2V, LTX-V), most don't.",
             null, OrderPriority: 30, Group: GroupVideo, Permission: Permissions.ParamVideo, FeatureFlag: "video", DoNotPreview: true, ChangeWeight: 2, IsAdvanced: true
@@ -619,8 +622,8 @@ public class T2IParamTypes
         VideoExtendSwapPercent = Register<double>(new("Video Extend Swap Percent", "If using a video model pair (eg Wan 2.2), For Image-To-Video, this is the percentage of steps given to the Swap model.\nFor example, at Steps=20 Swap=0.75, the base will run 5 steps then the swap model will run 15.\nWan 2.2 generally uses 50% or higher.",
             "0.5", Min: 0, Max: 1, Step: 0.05, OrderPriority: 1.7, ViewType: ParamViewType.SLIDER, Group: GroupVideoExtend, Permission: Permissions.ParamVideo, FeatureFlag: "video", IsAdvanced: true, DoNotPreview: true, DependNonDefault: VideoExtendSwapModel.Type.ID
             ));
-        VideoExtendFormat = Register<string>(new("Video Extend Format", "What format to save extended videos in.\nWebp video is ideal, but has compatibility issues. Gif is simple and compatible, while gif-hd is higher quality via ffmpeg.\nh264-mp4 is a standard video file that works anywhere, but doesn't get treated like an image file.\nh265-mp4 is a smaller file size but may not work for all devices.\nprores is a specialty format.",
-            "webp", GetValues: _ => videoFormats, OrderPriority: 20, Group: GroupVideoExtend, Permission: Permissions.ParamVideo, FeatureFlag: "video", DoNotPreview: true
+        VideoExtendFormat = Register<string>(new("Video Extend Format", "What format to save extended videos in.\nWebp video is simple and efficient, but has compatibility issues. Gif is simple and compatible, while gif-hd is higher quality via ffmpeg.\nh264-mp4 is a standard video file that works anywhere, but doesn't get treated like an image file.\nh265-mp4 is a smaller file size but may not work for all devices.\nprores is a specialty format.",
+            "h264-mp4", GetValues: _ => videoFormats, OrderPriority: 20, Group: GroupVideoExtend, Permission: Permissions.ParamVideo, FeatureFlag: "video", DoNotPreview: true
             ));
         // ================================================ Advanced Model Addons ================================================
         GroupAdvancedModelAddons = new("Advanced Model Addons", Open: false, OrderPriority: 8, IsAdvanced: true);
@@ -664,6 +667,9 @@ public class T2IParamTypes
             "", IgnoreIf: "", Group: GroupAdvancedModelAddons, Subtype: "Clip", Permission: Permissions.ModelParams, Toggleable: true, IsAdvanced: true, OrderPriority: 19, ChangeWeight: 7
             ));
         QwenModel = Register<T2IModel>(new("Qwen Model", "Which Qwen LLM to use as a text encoder, for OmniGen/QwenImage-style 'diffusion_models' folder models.",
+            "", IgnoreIf: "", Group: GroupAdvancedModelAddons, Subtype: "Clip", Permission: Permissions.ModelParams, Toggleable: true, IsAdvanced: true, OrderPriority: 20, ChangeWeight: 7
+            ));
+        MistralModel = Register<T2IModel>(new("Mistral Model", "Which Mistral LLM to use as a text encoder, for Flux.2-style 'diffusion_models' folder models.",
             "", IgnoreIf: "", Group: GroupAdvancedModelAddons, Subtype: "Clip", Permission: Permissions.ModelParams, Toggleable: true, IsAdvanced: true, OrderPriority: 20, ChangeWeight: 7
             ));
         TorchCompile = Register<string>(new("Torch Compile", "Torch.Compile is a way to dynamically accelerate AI models.\nIt wastes a bit of time (around a minute) on the first call compiling a graph of the generation, and then all subsequent generations run faster thanks to the compiled graph.\nTorch.Compile depends on Triton, which is difficult to install on Windows, easier on Linux.",
@@ -736,7 +742,7 @@ public class T2IParamTypes
         OverrideOutpathFormat = Register<string>(new("Override Outpath Format", $"Override the Outpath-Format user setting.\nFull details in <a target=\"_blank\" href=\"{Utilities.RepoDocsRoot}User%20Settings.md#path-format\">the docs here</a>.",
             "raw/[year]-[month]-[day]/[hour][minute][request_time_inc]-[prompt]-[model]", Toggleable: true, IsAdvanced: true, Group: GroupSwarmInternal, OrderPriority: 3
             ));
-        ModelSpecificEnhancements = Register<bool>(new("Model Specific Enhancements", "If checked, enables model-specific enhancements.\nFor example, on SDXL, smarter res-cond will be used.\nIf unchecked, will prefer more 'raw' behavior.",
+        ModelSpecificEnhancements = Register<bool>(new("Model Specific Enhancements", "If checked, enables model-specific enhancements.\nFor example, on SDXL, smarter res-cond will be used.\nAlso, some video models will automatically use tiled VAE when this is enabled, even if you didn't manually enable tiled VAE.\nIf unchecked, will prefer more 'raw' behavior.",
             "true", IgnoreIf: "true", IsAdvanced: true, Group: GroupSwarmInternal, OrderPriority: 5
             ));
         // ================================================ FreeU (TODO: remove/extensionize?) ================================================
@@ -970,7 +976,12 @@ public class T2IParamTypes
                 }
                 return val;
             case T2IParamDataType.LIST:
-                string[] vals = val.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                string splitter =  val.Contains("\n|||\n") ? "\n|||\n" : ",";
+                string[] vals = val.Split(splitter, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (vals.Length == 0)
+                {
+                    return "";
+                }
                 if (type.GetValues is not null && type.ValidateValues)
                 {
                     string[] possible = [.. type.GetValues(session).Select(v => v.Before("///"))];
@@ -994,7 +1005,7 @@ public class T2IParamTypes
                             }
                         }
                     }
-                    return vals.JoinString(",");
+                    return vals.JoinString("\n|||\n");
                 }
                 return val;
             case T2IParamDataType.IMAGE:
@@ -1015,7 +1026,7 @@ public class T2IParamTypes
                 }
                 return origVal;
             case T2IParamDataType.IMAGE_LIST:
-                foreach (string part in val.Split('|'))
+                foreach (string part in val.Split(val.Contains("\n|||\n") ? "\n|||\n" : "|"))
                 {
                     string partVal = part.Trim();
                     if (partVal.StartsWith("data:"))
@@ -1139,7 +1150,7 @@ public class T2IParamTypes
         List<string> result = [.. mainList];
         foreach (string str in addIn)
         {
-            if (!existing.Contains(str.Before("///")))
+            if (existing.Add(str.Before("///")))
             {
                 result.Add(str);
             }

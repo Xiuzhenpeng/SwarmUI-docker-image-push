@@ -203,7 +203,7 @@ function reviseBackendFeatureSet() {
     }
     doCompatFeature('stable-diffusion-v3', 'sd3');
     doCompatFeature('stable-cascade-v1', 'cascade');
-    doAnyArchFeature(['Flux.1-dev', 'hunyuan-video'], 'flux-dev');
+    doAnyArchFeature(['Flux.1-dev', 'Flux.2-dev', 'hunyuan-video'], 'flux-dev');
     doCompatFeature('stable-diffusion-xl-v1', 'sdxl');
     doAnyCompatFeature(['genmo-mochi-1', 'lightricks-ltx-video', 'hunyuan-video', 'nvidia-cosmos-1', `wan-21`, `wan-22`], 'text2video');
     for (let changer of featureSetChangers) {
@@ -373,6 +373,7 @@ function loadUserData(callback) {
             language = data.language;
         }
         allPresetsUnsorted = data.presets;
+        modelPresetLinkManager.loadFromServer(data.model_preset_links);
         sortPresets();
         presetBrowser.lightRefresh();
         if (shouldApplyDefault) {
@@ -390,23 +391,14 @@ function loadUserData(callback) {
 }
 
 function updateAllModels(models) {
-    coreModelMap = models;
-    allModels = models['Stable-Diffusion'];
-    let selector = getRequiredElementById('current_model');
-    let selectorVal = selector.value;
-    selector.innerHTML = '';
-    let emptyOption = document.createElement('option');
-    emptyOption.value = '';
-    emptyOption.innerText = '';
-    selector.appendChild(emptyOption);
-    for (let model of allModels) {
-        let option = document.createElement('option');
-        let clean = cleanModelName(model);
-        option.value = clean;
-        option.innerText = clean;
-        selector.appendChild(option);
+    simplifiedMap = {};
+    for (let key of Object.keys(models)) {
+        simplifiedMap[key] = models[key].map(model => {
+            return model[0];
+        });
     }
-    selector.value = selectorVal;
+    coreModelMap = simplifiedMap;
+    allModels = simplifiedMap['Stable-Diffusion'];
     pickle2safetensor_load();
     modelDownloader.reloadFolders();
 }
@@ -754,6 +746,7 @@ function genpageLoad() {
         imageHistoryBrowser.navigate('');
         initialModelListLoad();
         genericRequest('ListT2IParams', {}, data => {
+            modelsHelpers.loadClassesFromServer(data.models, data.model_compat_classes, data.model_classes);
             updateAllModels(data.models);
             wildcardHelpers.newWildcardList(data.wildcards);
             [rawGenParamTypesFromServer, rawGroupMapFromServer] = buildParameterList(data.list, data.groups);

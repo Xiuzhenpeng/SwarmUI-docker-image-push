@@ -1,3 +1,46 @@
+/** Represents a model compatibility class (a set of related model classes) (eg all of SDXL's sub-variants and parts share one compat class). */
+class ModelCompatClass {
+
+    constructor(data) {
+        this.id = data.id;
+        this.shortCode = data.short_code;
+        this.isText2Video = data.is_text2video;
+        this.isImage2Video = data.is_image2video;
+        this.lorasTargetTextEnc = data.loras_target_text_enc;
+    }
+}
+
+/** Represents a class of models (ie an architecture) (eg SDXL 1.0 Base). */
+class ModelClass {
+
+    constructor(data, compatClass) {
+        this.id = data.id;
+        this.name = data.name;
+        this.compatClass = compatClass;
+        this.standardWidth = data.standard_width;
+        this.standardHeight = data.standard_height;
+        if (!compatClass) {
+            console.warn(`Model class '${this.id}' has missing compat class!`);
+        }
+    }
+}
+
+/** Represents a single model (eg a safetensors file). */
+class Model {
+
+    constructor(name, subType, modelClass) {
+        this.name = name;
+        this.cleanName = cleanModelName(name);
+        this.subType = subType;
+        this.modelClass = modelClass;
+    }
+
+    /** Returns the 'data-cleanname' for use in a dropdown. */
+    cleanDropdown() {
+        return `${escapeHtmlNoBr(this.cleanName)} <span class="model-short-code">${this.modelClass?.compatClass?.shortCode}</span>`;
+    }
+}
+
 /** Collection of helper functions and data related to models. */
 class ModelsHelpers {
 
@@ -7,6 +50,70 @@ class ModelsHelpers {
         this.imageBlockElem.innerHTML = imageHtml;
         this.imageElem = getRequiredElementById('edit_model_image');
         this.enableImageElem = getRequiredElementById('edit_model_image_toggle');
+        this.currentModelSelectorElem = getRequiredElementById('current_model');
+        this.compatClasses = {};
+        this.modelClasses = {};
+        this.models = {};
+    }
+
+    /** Loads the model classes and models from the server data (ListT2IParams). */
+    loadClassesFromServer(modelsMap, compatClasses, modelClasses) {
+        this.compatClasses = {};
+        this.modelClasses = {};
+        for (let compatClass of Object.values(compatClasses)) {
+            this.compatClasses[compatClass.id] = new ModelCompatClass(compatClass);
+        }
+        for (let modelClass of Object.values(modelClasses)) {
+            this.modelClasses[modelClass.id] = new ModelClass(modelClass, this.compatClasses[modelClass.compat_class]);
+        }
+        this.models = {};
+        for (let key of Object.keys(modelsMap)) {
+            let set = {};
+            for (let modelData of modelsMap[key]) {
+                set[modelData[0]] = new Model(modelData[0], key, this.modelClasses[modelData[1]]);
+            }
+            this.models[key] = set;
+        }
+        let selectorVal = this.currentModelSelectorElem.value;
+        this.currentModelSelectorElem.innerHTML = '';
+        let emptyOption = document.createElement('option');
+        emptyOption.value = '';
+        emptyOption.innerText = '';
+        this.currentModelSelectorElem.appendChild(emptyOption);
+        for (let model of Object.values(this.models['Stable-Diffusion'])) {
+            let option = document.createElement('option');
+            option.value = model.cleanName;
+            option.innerText = model.cleanName;
+            option.dataset.cleanname = model.cleanDropdown();
+            this.currentModelSelectorElem.appendChild(option);
+        }
+        this.currentModelSelectorElem.value = selectorVal;
+    }
+
+    /** Returns the model data for the given model sub-type and model name, or null if not found. */
+    getDataFor(subType, modelName) {
+        if (!(subType in this.models)) {
+            console.warn(`Model sub-type '${subType}' not found!`);
+            return null;
+        }
+        let set = this.models[subType];
+        if (modelName in set) {
+            return set[modelName];
+        }
+        if (`${modelName}.safetensors` in set) {
+            return set[`${modelName}.safetensors`];
+        }
+        return null;
+    }
+
+    /** Returns a list of all model names for the given sub-type. */
+    listModelNames(subType) {
+        if (!(subType in this.models)) {
+            console.warn(`Model sub-type '${subType}' not found!`);
+            return [];
+        }
+        let set = this.models[subType];
+        return Object.keys(set);
     }
 }
 
@@ -176,10 +283,11 @@ function editModel(model, browser) {
     getRequiredElementById('edit_model_lora_default_confinement').value = model.lora_default_confinement || '';
     getRequiredElementById('edit_model_lora_default_confinement_div').style.display = model.architecture && model.architecture.endsWith('/lora') ? 'block' : 'none';
     let run = () => {
+		modelPresetLinkManager.buildPresetLinkSelectorForModel(curModelMenuBrowser.subType, model.name, 'edit_model_preset_id');
         triggerChangeFor(modelsHelpers.enableImageElem);
         $('#edit_model_modal').modal('show');
     };
-    let curImg = document.getElementById('current_image_img');
+    let curImg = currentImageHelper.getCurrentImage();
     if (curImg && curImg.tagName == 'IMG') {
         setMediaFileDirect(modelsHelpers.imageElem, curImg.src, 'image', 'cur', 'cur', () => {
             modelsHelpers.enableImageElem.checked = false;
@@ -269,6 +377,9 @@ function save_edit_model() {
         genericRequest('EditModelMetadata', data, data => {
             curModelMenuBrowser.browser.lightRefresh();
         });
+        let presetSelect = document.getElementById('edit_model_preset_id');
+        let presetTitle = presetSelect?.value || '';
+        modelPresetLinkManager.setLink(curModelMenuBrowser.subType, model.name, presetTitle);
         $('#edit_model_modal').modal('hide');
     }
     if (modelsHelpers.enableImageElem.checked) {
@@ -287,18 +398,6 @@ function save_edit_model() {
         }
     }
     complete();
-}
-
-function cleanModelName(name) {
-    let index = name.lastIndexOf('/');
-    if (index != -1) {
-        name = name.substring(index + 1);
-    }
-    index = name.lastIndexOf('.');
-    if (index != -1) {
-        name = name.substring(0, index);
-    }
-    return name;
 }
 
 function isModelArchCorrect(model) {
@@ -645,7 +744,11 @@ class ModelBrowserWrapper {
                 interject += `${getOptLine("Default LoRA Weight", model.data.lora_default_weight)}${getOptLine("Default LoRA Confinement", confinementName)}`;
                 searchableAdded += `, Default LoRA Weight: ${model.data.lora_default_weight}, Default LoRA Confinement: ${confinementName}`;
             }
-            description = `<span class="model_filename">${isStarred ? 'Starred: ' : ''}${escapeHtml(display)}</span><br>${getLine("Title", model.data.title)}${getOptLine("Author", model.data.author)}${getLine("Type", model.data.class)}${interject}${getOptLine('Trigger Phrase', model.data.trigger_phrase)}${getOptLine('Usage Hint', model.data.usage_hint)}${getLine("Description", model.data.description)}<br>`;
+            let linkedPresets = modelPresetLinkManager.getLinks(this.subType, model.data.name);
+            if (linkedPresets.length > 0) {
+                searchableAdded += `, Linked Presets: ${linkedPresets.join(', ')}`;
+            }
+            description = `<span class="model_filename">${isStarred ? 'Starred: ' : ''}${escapeHtml(display)}</span><br>${getLine("Title", model.data.title)}${getOptLine("Author", model.data.author)}${getLine("Type", model.data.class)}${interject}${getOptLine('Trigger Phrase', model.data.trigger_phrase)}${getOptLine("Linked Presets", linkedPresets.join(', '))}${getOptLine('Usage Hint', model.data.usage_hint)}${getLine("Description", model.data.description)}<br>`;
             let cleanForDetails = (val) => val == null ? '(Unset)' : safeHtmlOnly(val).replaceAll('<br>', '&emsp;');
             detail_list.push(cleanForDetails(model.data.title), cleanForDetails(model.data.class), cleanForDetails(model.data.usage_hint ?? model.data.trigger_phrase), cleanForDetails(model.data.description));
             if (model.data.local && permissions.hasPermission('edit_model_metadata')) {
@@ -873,7 +976,13 @@ function directSetModel(model) {
     if (!model) {
         return;
     }
+    let priorModel = getRequiredElementById('current_model').value;
+    if (priorModel) {
+        modelPresetLinkManager.removePresetsFrom('Stable-Diffusion', priorModel);
+    }
+    let modelName = null;
     if (model.name) {
+		modelName = model.name;
         let clean = cleanModelName(model.name);
         forceSetDropdownValue('input_model', clean);
         forceSetDropdownValue('current_model', clean);
@@ -894,8 +1003,10 @@ function directSetModel(model) {
         curModelArch = arch;
         curModelCompatClass = compatClass;
         curModelSpecialFormat = specialFormat;
+        modelName = name;
     }
     reviseBackendFeatureSet();
+    modelPresetLinkManager.addPresetsFrom('Stable-Diffusion', modelName);
     getRequiredElementById('input_model').dispatchEvent(new Event('change'));
     let aspect = document.getElementById('input_aspectratio');
     if (aspect) {

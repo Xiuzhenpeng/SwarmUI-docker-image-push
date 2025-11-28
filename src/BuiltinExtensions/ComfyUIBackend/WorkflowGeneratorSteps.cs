@@ -68,7 +68,7 @@ public class WorkflowGeneratorSteps
             }
             else if (!g.NoVAEOverride && g.UserInput.TryGet(T2IParamTypes.VAE, out T2IModel vae))
             {
-                if (g.FinalLoadedModel.ModelClass?.ID == "stable-diffusion-v3-medium" && vae.ModelClass?.CompatClass != "stable-diffusion-v3")
+                if (g.FinalLoadedModel.ModelClass?.ID == "stable-diffusion-v3-medium" && vae.ModelClass?.CompatClass?.ID != "stable-diffusion-v3")
                 {
                     Logs.Warning($"Model {g.FinalLoadedModel.Title} is an SD3 model, but you have VAE {vae.Title} selected. If that VAE is not an SD3 specific VAE, this is likely a mistake. Errors may follow. If this breaks, disable the custom VAE.");
                 }
@@ -76,7 +76,7 @@ public class WorkflowGeneratorSteps
             }
             else if (!g.NoVAEOverride && g.UserInput.Get(T2IParamTypes.AutomaticVAE, false))
             {
-                string clazz = g.FinalLoadedModel.ModelClass?.CompatClass;
+                string clazz = g.FinalLoadedModel.ModelClass?.CompatClass?.ID;
                 string vaeName = null;
                 if (clazz == "stable-diffusion-xl-v1")
                 {
@@ -254,7 +254,7 @@ public class WorkflowGeneratorSteps
                 {
                     Logs.Warning($"Ignore TeaCache Mode parameter because the current model is Nunchaku which does not support TeaCache. Use 'Nunchaku Cache Threshold' for a similar effect to TeaCache.");
                 }
-                else if (g.IsFlux())
+                else if (g.IsFlux() || g.IsFlux2())
                 {
                     if (teaCacheMode != "video only")
                     {
@@ -630,7 +630,7 @@ public class WorkflowGeneratorSteps
                         g.FinalNegativePrompt = [zeroed, 0];
                     }
                     if (!g.UserInput.TryGet(T2IParamTypes.Model, out T2IModel model) || model.ModelClass is null || 
-                        (model.ModelClass.CompatClass != "stable-diffusion-xl-v1"/* && model.ModelClass.CompatClass != "stable-diffusion-v3-medium"*/))
+                        (model.ModelClass.CompatClass?.ID != "stable-diffusion-xl-v1"/* && model.ModelClass.CompatClass?.ID != "stable-diffusion-v3-medium"*/))
                     {
                         throw new SwarmUserErrorException($"Model type must be SDXL for ReVision (currently is {model?.ModelClass?.Name ?? "Unknown"}). Set ReVision Strength to 0 if you just want IP-Adapter.");
                     }
@@ -1080,7 +1080,7 @@ public class WorkflowGeneratorSteps
                             ["end_percent"] = g.UserInput.Get(controlnetParams.End, 1)
                         });
                     }
-                    else if (g.IsSD3() || g.IsFlux() || g.IsChroma() || g.IsQwenImage())
+                    else if (g.IsSD3() || g.IsFlux() || g.IsFlux2() || g.IsChroma() || g.IsQwenImage())
                     {
                         applyNode = g.CreateNode("ControlNetApplyAdvanced", new JObject()
                         {
@@ -1229,7 +1229,7 @@ public class WorkflowGeneratorSteps
                     {
                         modelMustReencode = false;
                     }
-                    if (refineModel.ModelClass?.CompatClass == "stable-diffusion-xl-v1-refiner" && baseModel.ModelClass?.CompatClass == "stable-diffusion-xl-v1")
+                    if (refineModel.ModelClass?.CompatClass?.ID == "stable-diffusion-xl-v1-refiner" && baseModel.ModelClass?.CompatClass?.ID == "stable-diffusion-xl-v1")
                     {
                         modelMustReencode = false;
                     }
@@ -1251,6 +1251,10 @@ public class WorkflowGeneratorSteps
                 string upscaleMethod = g.UserInput.Get(ComfyUIBackendExtension.RefinerUpscaleMethod, "None");
                 // TODO: Better same-VAE check
                 bool doPixelUpscale = doUspcale && (upscaleMethod.StartsWith("pixel-") || upscaleMethod.StartsWith("model-"));
+                int width = (int)Math.Round(g.UserInput.GetImageWidth() * refineUpscale);
+                int height = (int)Math.Round(g.UserInput.GetImageHeight() * refineUpscale);
+                width = (width / 16) * 16; // avoid unworkable output sizes
+                height = (height / 16) * 16;
                 if (modelMustReencode || doPixelUpscale || doSave || g.MaskShrunkInfo.BoundsNode is not null)
                 {
                     g.CreateVAEDecode(origVae, g.FinalSamples, "24");
@@ -1262,10 +1266,6 @@ public class WorkflowGeneratorSteps
                     }
                     if (doPixelUpscale)
                     {
-                        int width = (int)Math.Round(g.UserInput.GetImageWidth() * refineUpscale);
-                        int height = (int)Math.Round(g.UserInput.GetImageHeight() * refineUpscale);
-                        width = (width / 16) * 16; // avoid unworkable output sizes
-                        height = (height / 16) * 16;
                         if (upscaleMethod.StartsWith("pixel-"))
                         {
                             g.CreateNode("ImageScale", new JObject()
@@ -1317,6 +1317,23 @@ public class WorkflowGeneratorSteps
                         ["samples"] = g.FinalSamples,
                         ["upscale_method"] = upscaleMethod.After("latent-"),
                         ["scale_by"] = refineUpscale
+                    }, "26");
+                    g.FinalSamples = ["26", 0];
+                }
+                else if (doUspcale && upscaleMethod.StartsWith("latentmodel-"))
+                {
+                    g.CreateNode("LatentUpscaleModelLoader", new JObject()
+                    {
+                        ["model_name"] = upscaleMethod.After("latentmodel-")
+                    }, "27");
+                    g.CreateNode("HunyuanVideo15LatentUpscaleWithModel", new JObject()
+                    {
+                        ["model"] = new JArray() { "27", 0 },
+                        ["samples"] = g.FinalSamples,
+                        ["upscale_method"] = "bilinear",
+                        ["width"] = width,
+                        ["height"] = height,
+                        ["crop"] = "disabled"
                     }, "26");
                     g.FinalSamples = ["26", 0];
                 }
@@ -1647,7 +1664,7 @@ public class WorkflowGeneratorSteps
                 int imageWidth = g.UserInput.GetImageWidth();
                 int imageHeight = g.UserInput.GetImageHeight();
                 int resPrecision = 64;
-                if (vidModel.ModelClass?.CompatClass == "hunyuan-video")
+                if (vidModel.ModelClass?.CompatClass?.ID == "hunyuan-video")
                 {
                     resPrecision = 16; // wants 720x720, which is wonky x16 and not x32 or x64
                 }

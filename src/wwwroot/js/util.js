@@ -342,10 +342,15 @@ function setSelectionRange(el, start, end) {
     let foundStart = false;
     let charCount = 0
     let endCharCount;
+    function isSpacer(node) { return node.tagName == 'BR' || (node.parentElement?.classList?.contains('wc_line_spacer')); }
     for (let i = 0; i < textNodes.length; i++) {
         let textNode = textNodes[i];
         endCharCount = charCount + (textNode.tagName == 'BR' ? 1 : textNode.textContent.length);
         if (!foundStart && start >= charCount && (i == textNodes.length - 1 ? start <= endCharCount : start < endCharCount)) {
+            range.setStart(textNode, start - charCount);
+            foundStart = true;
+        }
+        else if (!foundStart && start >= charCount && start == endCharCount && i + 1 < textNodes.length && isSpacer(textNodes[i + 1])) {
             range.setStart(textNode, start - charCount);
             foundStart = true;
         }
@@ -832,7 +837,7 @@ function filterDistinctBy(array, map) {
 }
 
 /** Gets the current value of an input element (in a checkbox-compatible way). */
-function getInputVal(input) {
+function getInputVal(input, rawLists = false) {
     if (input.tagName == 'INPUT' && input.type == 'checkbox') {
         return input.checked;
     }
@@ -844,6 +849,9 @@ function getInputVal(input) {
     }
     else if (input.tagName == 'SELECT' && input.multiple) {
         let valSet = [...input.selectedOptions].map(option => option.value);
+        if (rawLists) {
+            return valSet;
+        }
         if (valSet.length > 0) {
             return valSet.join(',');
         }
@@ -886,6 +894,9 @@ function imageToData(src, callback, resize256 = false) {
                 context.drawImage(image, 0, 0, widthFixed, heightFixed);
                 callback(canvas.toDataURL('image/jpeg'));
         };
+        image.onerror = () => {
+            callback(null);
+        };
         image.src = src;
     }
     else {
@@ -896,6 +907,9 @@ function imageToData(src, callback, resize256 = false) {
                 callback(reader.result);
             };
             reader.readAsDataURL(xhr.response);
+        };
+        xhr.onerror = () => {
+            callback(null);
         };
         xhr.open('GET', src);
         xhr.responseType = 'blob';
@@ -1114,4 +1128,23 @@ function measureText(text, relativeDiv = null) {
     let width = div.offsetWidth;
     relativeDiv.removeChild(div);
     return width;
+}
+
+/** Unzips a gzip-compressed Uint8Array. */
+async function ungzip(gzippedBytes) {
+    gzippedBytes = gzippedBytes.slice(0, 899);
+    let ds = new DecompressionStream('gzip');
+    let writer = ds.writable.getWriter();
+    writer.write(gzippedBytes);
+    writer.close();
+    let chunks = [];
+    let reader = ds.readable.getReader();
+    while (true) {
+        let {done, value} = await reader.read();
+        if (done) {
+            break;
+        }
+        chunks.push(value);
+    }
+    return new Uint8Array(chunks.reduce((acc, chunk) => [...acc, ...chunk], []));
 }

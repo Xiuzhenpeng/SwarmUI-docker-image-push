@@ -100,7 +100,7 @@ public static class T2IAPI
                 int batchOffset = images * guessBatchSize(rawInput);
                 while (!cancelTok.IsCancellationRequested)
                 {
-                    byte[] rec = await socket.ReceiveData(1024 * 1024 * 1024, linked.Token);
+                    byte[] rec = await socket.ReceiveData(Program.ServerSettings.Network.MaxReceiveBytes, linked.Token);
                     Volatile.Write(ref retain, true);
                     if (socket.State != WebSocketState.Open || cancelTok.IsCancellationRequested || Volatile.Read(ref ended))
                     {
@@ -175,7 +175,7 @@ public static class T2IAPI
                 discards = [.. discard.Values<int>()];
             }
         }
-        if (discards != null)
+        if (discards is not null)
         {
             foreach (int x in discards)
             {
@@ -208,7 +208,9 @@ public static class T2IAPI
             }
             else if (T2IParamTypes.TryGetType(key, out _, user_input))
             {
-                T2IParamTypes.ApplyParameter(key, rawInput[key].ToString(), user_input);
+                JToken val = rawInput[key];
+                string valStr = val is JArray jarr ? jarr.Select(v => $"{v}").JoinString("\n|||\n") : $"{val}";
+                T2IParamTypes.ApplyParameter(key, valStr, user_input);
             }
             else
             {
@@ -249,6 +251,10 @@ public static class T2IAPI
     {
         (int images, JObject rawInput, SharedGenT2IData data, int batchOffset) = input;
         using Session.GenClaim claim = session.Claim(gens: images);
+        if (isWS)
+        {
+            output(BasicAPIFeatures.GetCurrentStatusRaw(session));
+        }
         void setError(string message)
         {
             Logs.Debug($"Refused to generate image for {session.User.UserID}: {message}");
@@ -266,8 +272,23 @@ public static class T2IAPI
             setError(ex.Message);
             return;
         }
+        if (user_input.Get(T2IParamTypes.ForwardRawBackendData, false))
+        {
+            user_input.ReceiveRawBackendData = (type, data) =>
+            {
+                output(new JObject()
+                {
+                    ["raw_backend_data"] = new JObject()
+                    {
+                        ["type"] = type,
+                        ["data"] = Convert.ToBase64String(data)
+                    }
+                });
+            };
+        }
         user_input.ApplySpecialLogic();
-        images = user_input.Get(T2IParamTypes.Images, images);
+        images = user_input.Get(T2IParamTypes.Images, 1);
+        claim.Extend(images - claim.WaitingGenerations);
         Logs.Info($"User {session.User.UserID} requested {images} image{(images == 1 ? "" : "s")} with model '{user_input.Get(T2IParamTypes.Model)?.Name}'...");
         if (Logs.MinimumLevel <= Logs.LogLevel.Verbose)
         {
@@ -336,6 +357,10 @@ public static class T2IAPI
                 imageSet.Add(image);
             }
             WebhookManager.SendEveryGenWebhook(thisParams, url, image.File);
+            if (thisParams.Get(T2IParamTypes.ForwardSwarmData, false))
+            {
+                output(new JObject() { ["raw_swarm_data"] = new JObject() { ["params_used"] = JArray.FromObject(thisParams.ParamsQueried.ToArray()) } });
+            }
             output(new JObject() { ["image"] = url, ["batch_index"] = $"{actualIndex}", ["request_id"] = $"{thisParams.UserRequestId}", ["metadata"] = string.IsNullOrWhiteSpace(metadata) ? null : metadata });
         }
         for (int i = 0; i < images && !claim.ShouldCancel; i++)
@@ -365,7 +390,7 @@ public static class T2IAPI
                 }
             }
             int numCalls = 0;
-            tasks.Add(Task.Run(() => T2IEngine.CreateImageTask(thisParams, $"{imageIndex}", claim, output, setError, isWS, Program.ServerSettings.Backends.PerRequestTimeoutMinutes,
+            tasks.Add(Task.Run(() => T2IEngine.CreateImageTask(thisParams, $"{imageIndex}", claim, output, setError, isWS,
                 (image, metadata) =>
                 {
                     int actualIndex = imageIndex + numCalls;
@@ -423,10 +448,12 @@ public static class T2IAPI
             });
             Image gridImg = new(grid);
             long genTime = Environment.TickCount64 - timeStart;
-            user_input.ExtraMeta["generation_time"] = $"{genTime / 1000.0:0.00} total seconds (average {(finalTime - timeStart) / griddables.Length / 1000.0:0.00} seconds per image)";
-            (Task<MediaFile> gridFileTask, string metadata) = user_input.SourceSession.ApplyMetadata(gridImg, user_input, imgs.Length);
+            T2IParamInput finalInput = user_input.Clone();
+            finalInput.NoUnusedParams = true;
+            finalInput.ExtraMeta["generation_time"] = $"{genTime / 1000.0:0.00} total seconds (average {(finalTime - timeStart) / griddables.Length / 1000.0:0.00} seconds per image)";
+            (Task<MediaFile> gridFileTask, string metadata) = finalInput.SourceSession.ApplyMetadata(gridImg, finalInput, imgs.Length);
             T2IEngine.ImageOutput gridOutput = new() { File = gridImg, ActualFileTask = gridFileTask, GenTimeMS = genTime };
-            saveImage(gridOutput, -1, user_input, metadata);
+            saveImage(gridOutput, -1, finalInput, metadata);
         }
         T2IEngine.PostBatchEvent?.Invoke(new(user_input, [.. griddables]));
         output(new JObject() { ["discard_indices"] = JToken.FromObject(discard) });
@@ -940,10 +967,20 @@ public static class T2IAPI
                 "parent": "idhere" // or null
             }
         ],
+        "model_compat_classes":
+        {
+            "stable-diffusion-xl-v1": {"shortcode": "SDXL", ... },
+            // etc
+        },
+        "model_classes":
+        {
+            "stable-diffusion-xl-v1-base": {"compat_class": "stable-diffusion-xl-v1", ... },
+            // etc
+        }
         "models":
         {
-            "Stable-Diffusion": ["model1", "model2"],
-            "LoRA": ["model1", "model2"],
+            "Stable-Diffusion": [["model1", "archid"], ["model2", "archid"]],
+            "LoRA": [["model1", "archid"], ["model2", "archid"]],
             // etc
         },
         "wildcards": ["wildcard1", "wildcard2"],
@@ -957,7 +994,7 @@ public static class T2IAPI
         JObject modelData = [];
         foreach (T2IModelHandler handler in Program.T2IModelSets.Values)
         {
-            modelData[handler.ModelType] = new JArray(handler.ListModelNamesFor(session).Order().ToArray());
+            modelData[handler.ModelType] = new JArray(handler.ListModelsFor(session).OrderBy(m => m.Name).Select(m => new JArray(m.Name, m.ModelClass?.ID)).ToArray());
         }
         T2IParamType[] types = [.. T2IParamTypes.Types.Values.Where(p => p.Permission is null || session.User.HasPermission(p.Permission))];
         Dictionary<string, T2IParamGroup> groups = new(64);
@@ -970,11 +1007,23 @@ public static class T2IAPI
                 group = group.Parent;
             }
         }
+        JObject modelCompatClasses = [];
+        foreach (T2IModelCompatClass clazz in T2IModelClassSorter.CompatClasses.Values)
+        {
+            modelCompatClasses[clazz.ID] = clazz.ToNetData();
+        }
+        JObject modelClasses = [];
+        foreach (T2IModelClass clazz in T2IModelClassSorter.ModelClasses.Values)
+        {
+            modelClasses[clazz.ID] = clazz.ToNetData();
+        }
         return new JObject()
         {
             ["list"] = new JArray(types.Select(v => v.ToNet(session)).ToList()),
             ["groups"] = new JArray(groups.Values.OrderBy(g => g.OrderPriority).Select(g => g.ToNet(session)).ToList()),
             ["models"] = modelData,
+            ["model_compat_classes"] = modelCompatClasses,
+            ["model_classes"] = modelClasses,
             ["wildcards"] = new JArray(WildcardsHelper.ListFiles),
             ["param_edits"] = string.IsNullOrWhiteSpace(session.User.Data.RawParamEdits) ? null : JObject.Parse(session.User.Data.RawParamEdits)
         };

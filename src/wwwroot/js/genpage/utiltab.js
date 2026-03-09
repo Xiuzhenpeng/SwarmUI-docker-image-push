@@ -132,14 +132,11 @@ class LoraExtractorUtil {
         if (outName.startsWith('/')) {
             outName = outName.substring(1);
         }
-        if (outName.endsWith('.safetensors')) {
-            outName = outName.substring(0, outName.length - '.safetensors'.length);
-        }
-        if (outName.endsWith('.sft')) {
-            outName = outName.substring(0, outName.length - '.sft'.length);
-        }
-        if (outName.endsWith('.ckpt')) {
-            outName = outName.substring(0, outName.length - '.ckpt'.length);
+        for (let extension of ['.safetensors', '.sft', '.gguf', '.ckpt']) {
+            if (outName.endsWith(extension)) {
+                outName = outName.substring(0, outName.length - extension.length);
+                break;
+            }
         }
         if (!baseModel || !otherModel || !outName) {
             this.textArea.innerText = "Missing required values, cannot extract.";
@@ -250,6 +247,19 @@ class ModelDownloaderUtil {
         let doError = (msg = null) => {
             callback(null, null, null, null, null, null, null, msg);
         }
+        if (!id && versId) {
+            genericRequest('ForwardMetadataRequest', { 'url': `${this.civitPrefix}api/v1/model-versions/${versId}` }, (rawData) => {
+                rawData = rawData.response;
+                if (!rawData || !rawData.modelId) {
+                    doError();
+                    return;
+                }
+                this.getCivitaiMetadata(rawData.modelId, versId, callback, identifier, validateSafe);
+            }, 0, () => {
+                doError();
+            });
+            return;
+        }
         genericRequest('ForwardMetadataRequest', { 'url': `${this.civitPrefix}api/v1/models/${id}` }, (rawData) => {
             rawData = rawData.response;
             if (!rawData) {
@@ -264,7 +274,7 @@ class ModelDownloaderUtil {
             if (versId) {
                 for (let vers of rawData.modelVersions) {
                     for (let vFile of vers.files) {
-                        if (vFile.downloadUrl.endsWith(`/${versId}`)) {
+                        if ((vFile.name.endsWith(`.safetensors`) || vFile.name.endsWith(`.sft`) || vFile.name.endsWith(`.gguf`)) && splitWithTail(vFile.downloadUrl || '', '?', 2)[0].endsWith(`/${versId}`)) {
                             rawVersion = vers;
                             file = vFile;
                             break;
@@ -276,7 +286,7 @@ class ModelDownloaderUtil {
                 baseLoop:
                 for (let vers of rawData.modelVersions) {
                     for (let vFile of vers.files) {
-                        if (vFile.name.endsWith(`.safetensors`) || vFile.name.endsWith(`.sft`)) {
+                        if (vFile.name.endsWith(`.safetensors`) || vFile.name.endsWith(`.sft`) || vFile.name.endsWith(`.gguf`)) {
                             rawVersion = vers;
                             file = vFile;
                             break baseLoop;
@@ -284,9 +294,9 @@ class ModelDownloaderUtil {
                     }
                 }
             }
-            if (validateSafe && !file.name.endsWith('.safetensors') && !file.name.endsWith('.sft')) {
+            if (validateSafe && !file.name.endsWith('.safetensors') && !file.name.endsWith('.sft') && !file.name.endsWith('.gguf')) {
                 console.log(`refuse civitai url because download url is ${file.downloadUrl} / ${file.name} / ${identifier}`);
-                doError(`Cannot download model from that URL because it is not a safetensors file. Filename is '${file.name}'`);
+                doError(`Cannot download model from that URL because it is not a safetensors or GGUF file. Filename is '${file.name}'`);
                 return;
             }
             if (rawData.type == 'Checkpoint') { modelType = 'Stable-Diffusion'; }
@@ -295,6 +305,10 @@ class ModelDownloaderUtil {
             if (rawData.type == 'ControlNet') { modelType = 'ControlNet'; }
             if (rawData.type == 'VAE') { modelType = 'VAE'; }
             let imgs = rawVersion.images ? rawVersion.images.filter(img => img.type == 'image') : [];
+            let downloadUrl = file.downloadUrl;
+            if (file.name.endsWith('.gguf')) {
+                downloadUrl += `#.gguf`;
+            }
             let applyMetadata = (img) => {
                 let url = versId ? `${this.civitPrefix}models/${id}?modelVersionId=${versId}` : `${this.civitPrefix}models/${id}`;
                 metadata = {
@@ -317,7 +331,7 @@ class ModelDownloaderUtil {
                 if (['Illustrious', 'Pony'].includes(rawVersion.baseModel)) {
                     metadata['modelspec.usage_hint'] = rawVersion.baseModel;
                 }
-                callback(rawData, rawVersion, metadata, modelType, file.downloadUrl, img, imgs.map(x => x.url), null);
+                callback(rawData, rawVersion, metadata, modelType, downloadUrl, img, imgs.map(x => x.url), null);
             }
             if (imgs.length > 0) {
                 imageToData(imgs[0].url, img => applyMetadata(img), true);
@@ -374,6 +388,10 @@ class ModelDownloaderUtil {
                 return [parts[1], null];
             }
         }
+        if ((parts[0] == 'api' && parts[1] == 'download' && parts[2] == 'models' && parts.length >= 4) ||
+            (parts[0] == 'api' && parts[1] == 'v1' && parts[2] == 'model-versions' && parts.length >= 4)) {
+            return [null, splitWithTail(parts[3], '?', 2)[0]];
+        }
         return [null, null];
     }
 
@@ -398,8 +416,8 @@ class ModelDownloaderUtil {
                 parts[4] = parts[4].substring(0, parts[4].length - '?download=true'.length);
                 this.url.value = `${this.hfPrefix}${parts.join('/')}`;
             }
-            if (!parts[4].endsWith('.safetensors') && !parts[4].endsWith('.sft')) {
-                this.urlStatusArea.innerText = "URL appears to be a huggingface link, but not a safetensors file. Only safetensors can be auto-downloaded.";
+            if (!parts[4].endsWith('.safetensors') && !parts[4].endsWith('.sft') && !parts[4].endsWith('.gguf')) {
+                this.urlStatusArea.innerText = "URL appears to be a huggingface link, but not a safetensors file. Only safetensors and GGUF can be auto-downloaded.";
                 this.button.disabled = true;
                 return;
             }
@@ -408,14 +426,14 @@ class ModelDownloaderUtil {
                 this.url.value = `${this.hfPrefix}${parts.join('/')}`;
                 this.urlStatusArea.innerText = "URL appears to be a huggingface link, and has been autocorrected to a download link.";
                 this.button.disabled = false;
-                this.name.value = parts.slice(4).join('/').replaceAll('.safetensors', '').replaceAll('.sft', '');
+                this.name.value = parts.slice(4).join('/').replaceAll('.safetensors', '').replaceAll('.sft', '').replaceAll('.gguf', '');
                 this.nameInput();
                 return;
             }
             if (parts[2] == 'resolve') {
                 this.urlStatusArea.innerText = "URL appears to be a valid HuggingFace download link.";
                 this.button.disabled = false;
-                this.name.value = parts.slice(4).join('/').replaceAll('.safetensors', '').replaceAll('.sft', '');
+                this.name.value = parts.slice(4).join('/').replaceAll('.safetensors', '').replaceAll('.sft', '').replaceAll('.gguf', '');
                 this.nameInput();
                 return;
             }
@@ -517,10 +535,23 @@ class ModelDownloaderUtil {
                 this.nameInput();
                 return;
             }
-            if (parts[0] == 'api' && parts[1] == 'download' && parts[2] == 'models') {
-                this.urlStatusArea.innerText = "URL appears to be a valid CivitAI download link.";
+            if ((parts[0] == 'api' && parts[1] == 'download' && parts[2] == 'models')
+                || (parts[0] == 'api' && parts[1] == 'v1' && parts[2] == 'model-versions')) {
+                let versId = splitWithTail(parts[3] || '', '?', 2)[0];
+                this.urlStatusArea.innerText = "URL appears to be a valid CivitAI model-version link. Resolving metadata...";
                 this.nameInput();
-                loadMetadata(parts[3], null);
+                let onMetadataError = () => {
+                    this.urlStatusArea.innerText = "URL appears to be a CivitAI model-version link, but could not resolve model metadata from Civitai API.";
+                    this.nameInput();
+                };
+                genericRequest('ForwardMetadataRequest', { 'url': `${this.civitPrefix}api/v1/model-versions/${versId}` }, (rawData) => {
+                    rawData = rawData.response;
+                    if (!rawData || !rawData.modelId) {
+                        onMetadataError();
+                        return;
+                    }
+                    loadMetadata(`${rawData.modelId}`, versId);
+                }, 0, onMetadataError);
                 return;
             }
             this.urlStatusArea.innerText = "URL appears to be a CivitAI link, but seems to not be valid. Attempting to check it...";

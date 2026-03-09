@@ -164,16 +164,26 @@ function genericRequest(url, in_data, callback, depth = 0, errorHandle = null) {
             fail(genericServerErrorMsg.get());
             return;
         }
-        if (data.error_id && data.error_id == 'invalid_session_id') {
+        if (data.error_id) {
             if (depth > 3) {
                 fail(failedDepth.get());
                 return;
             }
-            console.log('Session refused, will get new one and try again.');
-            getSession(() => {
-                genericRequest(url, in_data, callback, depth + 1);
-            });
-            return;
+            if (data.error_id == 'invalid_session_id') {
+                console.log('Session refused, will get new one and try again.');
+                getSession(() => {
+                    genericRequest(url, in_data, callback, depth + 1, errorHandle);
+                });
+                return;
+            }
+            if (url == 'GetNewSession' && data.error_id == 'bad_impersonate') {
+                console.log(`Failed to impersonate user ${impersonateTargetUserId}, will clear and try again.`);
+                impersonateTargetUserId = null;
+                getSession(() => {
+                    genericRequest(url, in_data, callback, depth + 1, errorHandle);
+                });
+                return;
+            }
         }
         if (data.error) {
             console.log(`Tried making generic request ${url} but failed with error: ${data.error}`);
@@ -189,6 +199,7 @@ let lastServerVersion = null;
 let versionIsWrong = false;
 let lastSessionCheck = 0;
 let haveBadSession = false;
+let impersonateTargetUserId = new URLSearchParams(window.location.search).get('impersonate')?.trim() || null;
 
 let serverHasUpdated = translatable(`The server has updated since you opened the page, please refresh.`);
 
@@ -208,7 +219,16 @@ function getSession(callback) {
     }
     lastSessionCheck = Date.now();
     haveBadSession = true;
-    genericRequest('GetNewSession', {}, data => {
+    let inData = {};
+    let impersonateContainer = document.getElementById('impersonate_user_container');
+    if (impersonateContainer) {
+        impersonateContainer.style.display = impersonateTargetUserId ? 'block' : 'none';
+        if (impersonateTargetUserId) {
+            inData.impersonateUser = impersonateTargetUserId;
+            getRequiredElementById('impersonate_user_name').innerText = impersonateTargetUserId;
+        }
+    }
+    genericRequest('GetNewSession', inData, data => {
         haveBadSession = false;
         console.log("Session started.");
         session_id = data.session_id;
@@ -232,6 +252,15 @@ function getSession(callback) {
             callback();
         }
     });
+}
+
+function stopImpersonatingUser() {
+    if (!impersonateTargetUserId) {
+        return;
+    }
+    let url = new URL(window.location.href);
+    url.searchParams.delete('impersonate');
+    window.location.href = url.toString();
 }
 
 function sendServerDebugMessage(message) {
@@ -528,6 +557,15 @@ function setMediaFileInput(elem, file, type) {
     label.textContent = name;
     let reader = new FileReader();
     reader.addEventListener("load", () => {
+        if (file.type.startsWith('video/')) {
+            type = 'video';
+        }
+        else if (file.type.startsWith('image/')) {
+            type = 'image';
+        }
+        else if (file.type.startsWith('audio/')) {
+            type = 'audio';
+        }
         setMediaFileDirect(elem, reader.result, type, name, longName);
     }, false);
     reader.readAsDataURL(file);
@@ -876,9 +914,10 @@ function makeMultiselectInput(featureid, id, paramid, name, description, values,
 }
 
 function onFileInputPaste(e, type) {
+    let types = type.split(',');
     let element = findParentOfClass(e.target, 'auto-input').querySelector('input[type="file"]');
     let files = e.clipboardData.files;
-    if (files.length > 0 && files[0].type.startsWith(type)) {
+    if (files.length > 0 && types.some(t => files[0].type.startsWith(t))) {
         element.files = files;
         triggerChangeFor(element);
     }
@@ -893,10 +932,10 @@ function makeImageInput(featureid, id, paramid, name, description, toggles = fal
     <div class="auto-input auto-file-box"${featureid}>
         <label class="auto-file-input-label">
             <span class="auto-input-name">${getToggleHtml(toggles, id, name)}${translateableHtml(name)}${popover}</span>
-            <input type="text" id="${id}_pastebox" size="14" maxlength="0" placeholder="Ctrl+V: Paste Image" onpaste="onFileInputPaste(arguments[0], 'image/')">
+            <input type="text" id="${id}_pastebox" size="14" maxlength="0" placeholder="Ctrl+V: Paste Image" onpaste="onFileInputPaste(arguments[0], 'image/,video/')">
         </label>
         <label for="${id}" class="auto-file-label drag_image_target">
-            <input class="auto-file" type="file" accept="image/png, image/jpeg, image/webp, image/gif" id="${id}" data-param_id="${paramid}" onchange="load_media_file(this, 'image')" ondragover="updateFileDragging(arguments[0], false)" ondragleave="updateFileDragging(arguments[0], true)" autocomplete="off">
+            <input class="auto-file" type="file" accept="image/png, image/jpeg, image/webp, image/gif, video/mp4, video/webm, video/quicktime, video/mov" id="${id}" data-param_id="${paramid}" onchange="load_media_file(this, 'image')" ondragover="updateFileDragging(arguments[0], false)" ondragleave="updateFileDragging(arguments[0], true)" autocomplete="off">
             <div class="auto-file-input">
                 <a class="auto-file-input-button basic-button">${translateableHtml("Choose File")}</a>
                 <span class="auto-file-input-filename"></span>

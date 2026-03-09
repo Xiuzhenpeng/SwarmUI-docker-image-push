@@ -38,6 +38,9 @@ public class User
 
         /// <summary>IDs of the user's current login sessions.</summary>
         public List<string> LoginSessions { get; set; } = [];
+
+        /// <summary>OAuth email associated with this account, if any.</summary>
+        public string OAuthEmail { get; set; } = "";
     }
 
     public void BuildRoles()
@@ -283,6 +286,23 @@ public class User
     /// <summary>Incrementing counter of request IDs.</summary>
     public long RequestIdCounter = 1000;
 
+    /// <summary>Cache for a generic non-persistent internal session.</summary>
+    public Session GenericSession;
+
+    /// <summary>Get a generic internal use session instance for this user.</summary>
+    public Session GetGenericSession()
+    {
+        if (GenericSession is not null)
+        {
+            return GenericSession;
+        }
+        lock (UserLock)
+        {
+            GenericSession ??= SessionHandlerSource.CreateSession("generic_internal", UserID, false);
+            return GenericSession;
+        }
+    }
+
     /// <summary>Gets the next request ID for this user, incrementing the counter.</summary>
     public long GetNextRequestId()
     {
@@ -508,5 +528,31 @@ public class User
         }
         string userIdHex = Utilities.BytesToHex(Encoding.UTF8.GetBytes(UserID));
         return (session, $"{userIdHex}.{id}.{validationText}");
+    }
+
+    public void SetOAuthEmail(string email)
+    {
+        if (!string.IsNullOrWhiteSpace(Data.OAuthEmail))
+        {
+            Program.Sessions.UserOAuthLookupDB.Delete(Data.OAuthEmail);
+            Data.OAuthEmail = "";
+        }
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            Save();
+            return;
+        }
+        SessionHandler.UserOAuthLookup lookup = Program.Sessions.UserOAuthLookupDB.FindById(email);
+        if (lookup is not null)
+        {
+            throw new Exception("That OAuth email is already linked to another account.");
+        }
+        Data.OAuthEmail = email;
+        Program.Sessions.UserOAuthLookupDB.Upsert(new SessionHandler.UserOAuthLookup()
+        {
+            OAuthEmail = email,
+            UserID = UserID
+        });
+        Save();
     }
 }

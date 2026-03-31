@@ -1,0 +1,19 @@
+# 接收参数
+ARG SWARMUI_TAG=latest
+ARG COMFYUI_TAG=latest
+
+# 动态 FROM（关键）
+FROM xiuzhenpeng/swarmui:${SWARMUI_TAG}
+
+# 再声明一次（Docker 规则）
+ARG COMFYUI_TAG
+
+# copy from 动态 image
+COPY --from=xiuzhenpeng/comfyui:${COMFYUI_TAG} /ComfyUI /SwarmUI/dlbackend/ComfyUI
+
+# 权限修复
+RUN chown -R 1000:1000 /SwarmUI/dlbackend/ComfyUI
+
+EXPOSE 7801
+
+ENTRYPOINT ["bash", "/SwarmUI/launchtools/docker-standard-inner.sh"]

@@ -1,0 +1,56 @@
+name: Build Full SwarmUI Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      swarmui_tag:
+        description: "SwarmUI image tag"
+        required: false
+        default: "latest"
+
+      comfyui_tag:
+        description: "ComfyUI image tag"
+        required: false
+        default: "latest"
+
+      full_tag:
+        description: "Full image tag"
+        required: false
+        default: "latest"
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1️⃣ 拉代码
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2️⃣ 打印参数（防止填错）
+      - name: Print input tags
+        run: |
+          echo "SwarmUI tag: ${{ github.event.inputs.swarmui_tag }}"
+          echo "ComfyUI tag: ${{ github.event.inputs.comfyui_tag }}"
+          echo "Full tag: ${{ github.event.inputs.full_tag }}"
+
+      # 3️⃣ 登录 Docker Hub
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 4️⃣ 构建并推送镜像
+      - name: Build and Push Full Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: launchtools/Dockerfile.full
+          push: true
+          build-args: |
+            SWARMUI_TAG=${{ github.event.inputs.swarmui_tag }}
+            COMFYUI_TAG=${{ github.event.inputs.comfyui_tag }}
+          tags: |
+            xiuzhenpeng/swarmui-full:${{ github.event.inputs.full_tag }}
+            xiuzhenpeng/swarmui-full:latest

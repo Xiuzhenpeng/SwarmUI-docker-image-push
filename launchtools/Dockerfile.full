@@ -9,8 +9,13 @@ FROM xiuzhenpeng/swarmui:${SWARMUI_TAG}
 # copy from 动态 image
 COPY --from=comfy /ComfyUI /SwarmUI/dlbackend/ComfyUI
 
+# copy setting files
+COPY launchtools/Data_files/Backends.fds /SwarmUI/Date/Backends.fds
+COPY launchtools/Data_files/Settings.fds /SwarmUI/Date/Settings.fds
+
 # 权限修复
-RUN chown -R 1000:1000 /SwarmUI/dlbackend/ComfyUI
+RUN chown -R 1000:1000 /SwarmUI/dlbackend/ComfyUI \
+    && chown -R 1000:1000 /SwarmUI/Data/ || true
 
 EXPOSE 7801
 

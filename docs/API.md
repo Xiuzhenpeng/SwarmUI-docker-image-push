@@ -15,7 +15,7 @@ Some API routes, designated with a `WS` suffix, take WebSocket connections. Usua
 ### Authorization
 
 All API routes, with the exception of `GetNewSession`, require a `session_id` input in the JSON.
-The one special case is `GenerateText2ImageWS`, which will auto-create a temporary non-persistent session if no `session_id` is supplied on the initial WebSocket message.
+The one special case is `GenerateText2ImageWS`, which always auto-creates a temporary non-persistent session for the lifetime of the WebSocket and ignores any supplied `session_id`.
 For every other route, naturally, call `GetNewSession` to get a session ID to use.
 
 If the Swarm instance is configured to require accounts, you must feed a `cookie` named `swarm_token` with the value of a token associated with a valid SwarmUI account gotten from the UI (or direct API calls from an admin API handler).

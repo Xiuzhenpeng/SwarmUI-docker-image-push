@@ -125,6 +125,19 @@ public class WGNodeData(JArray _path, WorkflowGenerator _gen, string _dataType, 
                     ["temporal_overlap"] = 4
                 }, id);
             }
+            // LTX-2 VAE is relatively fine, but gets intense. Adding some temporal tiling chills out the VRAM hit without visual difference, so on by default
+            else if ((Gen.IsLTXV2()) && UserInput.Get(T2IParamTypes.ModelSpecificEnhancements, true))
+            {
+                decoded = Gen.CreateNode("VAEDecodeTiled", new JObject()
+                {
+                    ["vae"] = vae.Path,
+                    ["samples"] = Path,
+                    ["tile_size"] = 2048,
+                    ["overlap"] = 256,
+                    ["temporal_size"] = 64,
+                    ["temporal_overlap"] = 16
+                }, id);
+            }
             else
             {
                 decoded = Gen.CreateNode("VAEDecode", new JObject()
@@ -340,11 +353,33 @@ public class WGNodeData(JArray _path, WorkflowGenerator _gen, string _dataType, 
         {
             if (vae.IsCompat(T2IModelClassSorter.CompatLtxv2))
             {
-                WGNodeData audioEncoded = AttachedAudio.EncodeToLatent(audioVae);
+                JArray target = AttachedAudio.Path;
+                if (AttachedAudio.IsRawMedia) // TODO: When is the correct case to do a solid mask on audio? Any raw audio is *probably* mask-worthy, but...??
+                {
+                    string ensured = Gen.CreateNode("SwarmEnsureAudio", new JObject()
+                    {
+                        ["audio"] = AttachedAudio.Path,
+                        ["target_duration"] = 0.1
+                    });
+                    WGNodeData ensuredNode = AttachedAudio.WithPath([ensured, 0], DT_AUDIO);
+                    WGNodeData audioEncoded = ensuredNode.EncodeToLatent(audioVae);
+                    string mask = Gen.CreateNode("SolidMask", new JObject()
+                    {
+                        ["value"] = 0,
+                        ["width"] = 512,
+                        ["height"] = 512 // TODO: ?
+                    });
+                    string masked = Gen.CreateNode("SetLatentNoiseMask", new JObject()
+                    {
+                        ["samples"] = audioEncoded.Path,
+                        ["mask"] = WorkflowGenerator.NodePath(mask, 0)
+                    });
+                    target = [masked, 0];
+                }
                 string concatted = Gen.CreateNode("LTXVConcatAVLatent", new JObject()
                 {
                     ["video_latent"] = Path,
-                    ["audio_latent"] = audioEncoded.Path
+                    ["audio_latent"] = target
                 });
                 return WithPath([concatted, 0], DT_LATENT_AUDIOVIDEO);
             }

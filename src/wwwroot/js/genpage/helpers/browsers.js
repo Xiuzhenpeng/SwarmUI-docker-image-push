@@ -456,6 +456,7 @@ class GenPageBrowserClass {
             img.addEventListener('click', () => {
                 this.select(file, div);
             });
+            img.classList.add('image-block-img-inner');
             div.appendChild(img);
             if (this.format.includes('Cards')) {
                 div.className += ' model-block model-block-hoverable';
@@ -714,7 +715,7 @@ class GenPageBrowserClass {
                     barSpot = 100; // TODO: Swipeable width
                 }
                 this.folderTreeDiv.style.width = `${barSpot}px`;
-                this.fullContentDiv.style.width = `calc(100% - ${barSpot}px - 0.6rem)`;
+                this.fullContentDiv.style.width = `calc(100% - ${barSpot + 1}px - 0.6rem)`;
                 if (this.sizeChangedEvent) {
                     this.sizeChangedEvent();
                 }

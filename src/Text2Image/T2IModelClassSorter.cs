@@ -163,7 +163,8 @@ public class T2IModelClassSorter
         bool isLtxvVae(JObject h) => h.ContainsKey("decoder.conv_in.conv.bias") && h.ContainsKey("decoder.last_time_embedder.timestep_embedder.linear_1.bias");
         bool isLtxv2(JObject h) => hasKey(h, "transformer_blocks.1.audio_to_video_attn.k_norm.weight");
         bool isLtxv23(JObject h) => hasKey(h, "text_embedding_projection.audio_aggregate_embed.weight");
-        bool isLtxv2Lora(JObject h) => hasLoraKey(h, "transformer_blocks.0.attn1.to_k") && hasLoraKey(h, "transformer_blocks.0.attn1.to_out.0") && hasLoraKey(h, "transformer_blocks.9.attn2.to_v");
+        bool isLtxv2Lora(JObject h) => (hasLoraKey(h, "transformer_blocks.0.attn1.to_k") && hasLoraKey(h, "transformer_blocks.0.attn1.to_out.0") && hasLoraKey(h, "transformer_blocks.9.attn2.to_v"))
+            || (hasLoraKey(h, "transformer_blocks.0.audio_attn1.to_k") && hasLoraKey(h, "transformer_blocks.0.audio_attn1.to_out.0") && hasLoraKey(h, "transformer_blocks.9.audio_attn1.to_v"));
         bool isSana(JObject h) => h.ContainsKey("attention_y_norm.weight") && h.ContainsKey("blocks.0.attn.proj.weight");
         bool isHunyuanVideo(JObject h) => h.ContainsKey("model.model.txt_in.individual_token_refiner.blocks.1.self_attn.qkv.weight") || h.ContainsKey("txt_in.individual_token_refiner.blocks.1.self_attn_qkv.weight");
         bool isHunyuanVideoSkyreelsImage2V(JObject h) => h.TryGetValue("img_in.proj.weight", out JToken jtok) && jtok["shape"].ToArray()[1].Value<long>() == 32;
@@ -412,7 +413,7 @@ public class T2IModelClassSorter
         }});
         Register(new() { ID = "Flux.1-dev/lora", CompatClass = CompatFlux, Name = "Flux.1 LoRA", StandardWidth = 1024, StandardHeight = 1024, IsThisModelOfClass = (m, h) =>
         {
-            return isFluxLora(h) && !isHyVid15Lora(h);
+            return isFluxLora(h) && !isHyVid15Lora(h) && !isFlux2KleinLora(h);
         }});
         Register(new() { ID = "Flux.1-dev/depth", CompatClass = CompatFlux, Name = "Flux.1 Depth", StandardWidth = 1024, StandardHeight = 1024, IsThisModelOfClass = (m, h) =>
         {
@@ -677,6 +678,10 @@ public class T2IModelClassSorter
         Register(new() { ID = "chroma", CompatClass = CompatChroma, Name = "Chroma", StandardWidth = 1024, StandardHeight = 1024, IsThisModelOfClass = (m, h) =>
         {
             return isChroma(h) && !isChromaRadiance(h);
+        }});
+        Register(new() { ID = "chroma/lora", CompatClass = CompatChroma, Name = "Chroma LoRA", StandardWidth = 1024, StandardHeight = 1024, IsThisModelOfClass = (m, h) =>
+        {
+            return false;
         }});
         Register(new() { ID = "chroma-radiance", CompatClass = CompatChromaRadiance, Name = "Chroma Radiance", StandardWidth = 1024, StandardHeight = 1024, IsThisModelOfClass = (m, h) =>
         {

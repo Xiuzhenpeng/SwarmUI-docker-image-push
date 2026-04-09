@@ -42,6 +42,7 @@ public class API
     {
         Session session = null;
         WebSocket socket = null;
+        bool autoCreatedSession = false;
         async Task Error(string message, string jsonErrorId = null, string jsonErrorMessage = null)
         {
             string forUser = session is null ? "" : $" for user '{session.User.UserID}'";
@@ -100,23 +101,42 @@ public class API
             string path = context.Request.Path.ToString().ToLowerFast().After("/api/");
             if (!SessionlessRoutes.Contains(path))
             {
-                if (!input.TryGetValue("session_id", out JToken session_id))
+                if (path == "generatetext2imagews")
                 {
-                    if (context.Request.Headers.TryGetValue("X-Session-ID", out StringValues headerVals) && headerVals.Count >= 1)
+                    User user = WebServer.GetUserFor(context);
+                    if (user is null)
                     {
-                        session_id = headerVals[0];
-                    }
-                    else
-                    {
-                        await Error("Request input lacks required session id", "basic_api", "missing session id");
+                        await Error("GenerateText2ImageWS request is unauthorized", "invalid_user", "Invalid or unauthorized.");
                         return;
                     }
+                    string source = WebUtil.GetIPString(context);
+                    if (source.Length > 100)
+                    {
+                        source = source[..100] + "...";
+                    }
+                    session = Program.Sessions.CreateSession(source, user.UserID, persist: false);
+                    autoCreatedSession = true;
                 }
-                if (!Program.Sessions.TryGetSession($"{session_id}", out session))
+                else
                 {
-                    await Error("Request input has unknown session id (if you're not writing API code you can ignore this message)");
-                    await context.YieldJsonOutput(socket, 401, Utilities.ErrorObj("Invalid session ID. You may need to refresh the page.", "invalid_session_id"));
-                    return;
+                    if (!input.TryGetValue("session_id", out JToken session_id))
+                    {
+                        if (context.Request.Headers.TryGetValue("X-Session-ID", out StringValues headerVals) && headerVals.Count >= 1)
+                        {
+                            session_id = headerVals[0];
+                        }
+                        else
+                        {
+                            await Error("Request input lacks required session id", "basic_api", "missing session id");
+                            return;
+                        }
+                    }
+                    if (!Program.Sessions.TryGetSession($"{session_id}", out session))
+                    {
+                        await Error("Request input has unknown session id (if you're not writing API code you can ignore this message)");
+                        await context.YieldJsonOutput(socket, 401, Utilities.ErrorObj("Invalid session ID. You may need to refresh the page.", "invalid_session_id"));
+                        return;
+                    }
                 }
             }
             if (!APIHandlers.TryGetValue(path, out APICall handler))
@@ -194,6 +214,13 @@ public class API
                 return;
             }
             await Error($"Internal exception: {ex.ReadableString()}", "internal_error", "An internal error occurred");
+        }
+        finally
+        {
+            if (autoCreatedSession && session is not null)
+            {
+                Program.Sessions.RemoveSession(session);
+            }
         }
     }
 

@@ -101,6 +101,7 @@ The key 'extra_metadata' may be used to apply extra internal metadata as a JSON 
 #### Description
 
 Generate images from text prompts, with WebSocket updates. This is the most important route inside of Swarm.
+If the initial WebSocket message omits `session_id`, the server will auto-create a temporary non-persistent session for the lifetime of that socket.
 
 #### Permission Flag
 
@@ -111,7 +112,7 @@ Generate images from text prompts, with WebSocket updates. This is the most impo
 | Name | Type | Description | Default |
 | --- | --- | --- | --- |
 | images | Int32 | The number of images to generate. | **(REQUIRED)** |
-| rawInput | JObject | Raw mapping of input should contain general T2I parameters (see listing on Generate tab of main interface) to values, eg `{ "prompt": "a photo of a cat", "model": "OfficialStableDiffusion/sd_xl_base_1.0", "steps": 20, ... }`. Note that this is the root raw map, ie all params go on the same level as `images`, `session_id`, etc.
+| rawInput | JObject | Raw mapping of input should contain general T2I parameters (see listing on Generate tab of main interface) to values, eg `{ "prompt": "a photo of a cat", "model": "OfficialStableDiffusion/sd_xl_base_1.0", "steps": 20, ... }`. Note that this is the root raw map, ie all params go on the same level as `images`, `session_id`, etc. For this specific route, `session_id` may be omitted on the initial WebSocket message to use an auto-created temporary session.
 The key 'extra_metadata' may be used to apply extra internal metadata as a JSON string:string map. | **(REQUIRED)** |
 
 #### Return Format

@@ -42,6 +42,7 @@ public class API
     {
         Session session = null;
         WebSocket socket = null;
+        bool autoCreatedSession = false;
         async Task Error(string message, string jsonErrorId = null, string jsonErrorMessage = null)
         {
             string forUser = session is null ? "" : $" for user '{session.User.UserID}'";
@@ -108,11 +109,30 @@ public class API
                     }
                     else
                     {
-                        await Error("Request input lacks required session id", "basic_api", "missing session id");
-                        return;
+                        if (path == "generatetext2imagews")
+                        {
+                            User user = WebServer.GetUserFor(context);
+                            if (user is null)
+                            {
+                                await Error("Request input lacks required session id and request is unauthorized", "invalid_user", "Invalid or unauthorized.");
+                                return;
+                            }
+                            string source = WebUtil.GetIPString(context);
+                            if (source.Length > 100)
+                            {
+                                source = source[..100] + "...";
+                            }
+                            session = Program.Sessions.CreateSession(source, user.UserID, persist: false);
+                            autoCreatedSession = true;
+                        }
+                        else
+                        {
+                            await Error("Request input lacks required session id", "basic_api", "missing session id");
+                            return;
+                        }
                     }
                 }
-                if (!Program.Sessions.TryGetSession($"{session_id}", out session))
+                if (session is null && !Program.Sessions.TryGetSession($"{session_id}", out session))
                 {
                     await Error("Request input has unknown session id (if you're not writing API code you can ignore this message)");
                     await context.YieldJsonOutput(socket, 401, Utilities.ErrorObj("Invalid session ID. You may need to refresh the page.", "invalid_session_id"));
@@ -194,6 +214,13 @@ public class API
                 return;
             }
             await Error($"Internal exception: {ex.ReadableString()}", "internal_error", "An internal error occurred");
+        }
+        finally
+        {
+            if (autoCreatedSession && session is not null)
+            {
+                Program.Sessions.RemoveSession(session);
+            }
         }
     }
 

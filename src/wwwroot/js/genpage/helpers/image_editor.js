@@ -320,6 +320,9 @@ class ImageEditorHistoryEntry {
             // TODO: Reinsert at proper index
             this.editor.addLayer(this.data.layer, true);
         }
+        if (this.data.onUndo) {
+            this.data.onUndo();
+        }
     }
 }
 
@@ -466,6 +469,7 @@ class ImageEditor {
 
     undoOnce() {
         if (this.editHistory.length > 0) {
+            this.activeTool.onBeforeHistoryUndo();
             let entry = this.editHistory.pop();
             entry.undo();
             this.redraw();
@@ -520,9 +524,7 @@ class ImageEditor {
         });
         canvas.addEventListener('drop', (e) => this.handleCanvasImageDrop(e));
         canvas.addEventListener('contextmenu', (e) => {
-            if (this.activeTool && this.activeTool.onContextMenu(e)) {
-                e.preventDefault();
-            }
+            e.preventDefault();
         });
         this.ctx = canvas.getContext('2d');
         canvas.style.cursor = 'none';
@@ -724,7 +726,11 @@ class ImageEditor {
     }
 
     onMouseDown(e) {
+        // 1 = middle, 2 = right
         if (this.altDown || e.button == 1) {
+            this.handleAltDown();
+        }
+        if (e.button == 2 && this.activeTool && !this.activeTool.onRightMouseDown(e)) {
             this.handleAltDown();
         }
         this.mouseDown = true;
@@ -733,7 +739,7 @@ class ImageEditor {
     }
 
     onMouseUp(e) {
-        if (e.button == 1) {
+        if (e.button == 1 || e.button == 2) {
             this.handleAltUp();
         }
         this.mouseDown = false;
@@ -985,6 +991,7 @@ class ImageEditor {
         this.realHeight = img.naturalHeight;
         if (this.tools['sam2points']) {
             this.tools['sam2points'].layerPoints = new Map();
+            this.tools['sam2points'].lastAppliedPoints = { positive: [], negative: [] };
         }
         if (this.tools['sam2bbox']) {
             this.tools['sam2bbox'].bboxStartX = null;

@@ -283,6 +283,10 @@ class SimpleTab {
         });
     }
 
+    doInterrupt() {
+        this.genHandler.doInterrupt();
+    }
+
     clearBatch() {
         this.batchArea.innerHTML = '';
         this.getHistoryFor(this.browser.selected).clear();
@@ -387,7 +391,6 @@ class SimpleTabGenerateHandler extends GenerateHandler {
         if (!data['model']) {
             data['model'] = '(none)';
         }
-        delete data['stability_api_key'];
         return data;
     }
 

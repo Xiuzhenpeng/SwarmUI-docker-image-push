@@ -8,6 +8,7 @@ class ModelCompatClass {
         this.isImage2Video = data.is_image2video;
         this.lorasTargetTextEnc = data.loras_target_text_enc;
         this.isAudioModel = data.is_audio_model;
+        this.resolutionPrecision = data.resolution_precision || 16;
     }
 }
 
@@ -161,11 +162,17 @@ function getCivitUrlGuessFor(model) {
     }
     let civitUrl = '';
     // (Hacky but we don't have a dedicated datastore for this, just included at the top of descriptions generally)
-    let civitUrlStartIndex = model.description.indexOf('<a href="https://civitai.com/models/');
+    let civitUrlStartIndex = model.description.indexOf('<a href="https://civitai.red/models/');
+    if (civitUrlStartIndex == -1) {
+        civitUrlStartIndex = model.description.indexOf('<a href="https://civitai.com/models/');
+    }
     if (civitUrlStartIndex != -1) {
         let end = model.description.indexOf('"', civitUrlStartIndex + '<a href="'.length);
         if (end != -1) {
             civitUrl = model.description.substring(civitUrlStartIndex + '<a href="'.length, end);
+            if (civitUrl.startsWith('https://civitai.com/')) {
+                civitUrl = `https://civitai.red/${civitUrl.substring('https://civitai.com/'.length)}`;
+            }
             if (!civitUrl.includes("?modelVersionId=") || civitUrl.length > 200 || civitUrl.includes("?modelVersionId=null")) {
                 console.log(`Invalid CivitAI URL (failed sanity check): ${civitUrl}`);
                 civitUrl = '';
@@ -451,6 +458,14 @@ function cleanModelName(name) {
     return name.endsWith('.safetensors') ? name.substring(0, name.length - '.safetensors'.length) : name;
 }
 
+/** Switches to the History tab and filters to images generated with the given model. */
+function browseModelHistory(type, model) {
+    let filterInput = getRequiredElementById('imagehistorybrowser_filter_input');
+    filterInput.value = `${type}: ${cleanModelName(model.name)}`;
+    filterInput.dispatchEvent(new Event('input'));
+    getRequiredElementById('imagehistorytabclickable').click();
+}
+
 class ModelBrowserWrapper {
     constructor(subType, subIds, container, id, selectOne, extraHeader = '') {
         this.subType = subType;
@@ -556,7 +571,7 @@ class ModelBrowserWrapper {
                         'author': '(Internal)',
                         'architecture': 'VAE',
                         'class': 'VAE',
-                        'description': 'Use the VAE sepcified in your User Settings, or use the VAE built-in to your Stable Diffusion model',
+                        'description': translate('Use the VAE sepcified in your User Settings, the system default VAE for the selected model class, or the VAE built-in to the selected model'),
                         'preview_image': '/imgs/automatic.jpg',
                         'is_supported_model_format': true,
                         'local': true,
@@ -572,7 +587,7 @@ class ModelBrowserWrapper {
                         'author': '(Internal)',
                         'architecture': 'VAE',
                         'class': 'VAE',
-                        'description': 'Use the VAE built-in to your Stable Diffusion model',
+                        'description': translate('Use the system default VAE for the selected model class, or the VAE built-in to the selected model'),
                         'preview_image': '/imgs/none.jpg',
                         'is_supported_model_format': true,
                         'local': true,
@@ -694,9 +709,9 @@ class ModelBrowserWrapper {
         }
         else if (this.subType == 'Embedding') {
             buttons = [
-                { label: 'Add To Prompt', onclick: () => embedAddToPrompt(model.data, 'alt_prompt_textbox') },
-                { label: 'Add To Negative', onclick: () => embedAddToPrompt(model.data, 'alt_negativeprompt_textbox') },
-                { label: 'Remove All Usages', onclick: () => { embedClearFromPrompt(model.data, 'alt_prompt_textbox'); embedClearFromPrompt(model.data, 'alt_negativeprompt_textbox'); } }
+                { label: 'Add To Prompt', onclick: () => embedAddToPrompt(model.data, 'alt_prompt_textbox'), can_multi: true },
+                { label: 'Add To Negative', onclick: () => embedAddToPrompt(model.data, 'alt_negativeprompt_textbox'), can_multi: true },
+                { label: 'Remove All Usages', onclick: () => { embedClearFromPrompt(model.data, 'alt_prompt_textbox'); embedClearFromPrompt(model.data, 'alt_negativeprompt_textbox'); }, can_multi: true }
             ];
         }
         else if (this.subType == 'LoRA') {
@@ -708,18 +723,28 @@ class ModelBrowserWrapper {
                 }
                 promptBox.value += ` <lora:${name}>`;
                 triggerChangeFor(promptBox);
-            }}];
+            }, can_multi: true }];
         }
         let isStarred = this.isStarred(model.data.name);
         let starButton = { label: isStarred ? 'Unstar' : 'Star', onclick: () => { this.toggleStar(model.data.name); } };
         buttons.push(starButton);
+        if (this.subType == 'Stable-Diffusion') {
+            buttons.push({ label: 'Browse History', onclick: () => browseModelHistory('Model', model.data) });
+        }
+        else if (this.subType == 'LoRA') {
+            buttons.push({ label: 'Browse History', onclick: () => browseModelHistory('LoRAs', model.data) });
+        }
+        else if (this.subType == 'Embedding') {
+            buttons.push({ label: 'Browse History', onclick: () => browseModelHistory('used_embeddings', model.data) });
+        }
         let name = cleanModelName(model.data.name);
         let display = (model.data.display || name).replaceAll('/', ' / ');
         if (this.subType == 'Wildcards') {
             buttons = [starButton];
+            buttons.push({ label: 'Browse History', onclick: () => browseModelHistory('used_wildcards', model.data) });
             if (permissions.hasPermission('edit_wildcards')) {
                 buttons.push({ label: 'Edit Wildcard', onclick: () => wildcardHelpers.editWildcard(model.data) });
-                buttons.push({ label: 'Duplicate Wildcard', onclick: () => wildcardHelpers.duplicateWildcard(model.data) });
+                buttons.push({ label: 'Duplicate Wildcard', onclick: () => wildcardHelpers.duplicateWildcard(model.data), can_multi: true });
             }
             buttons.push({ label: 'Test Wildcard', onclick: () => wildcardHelpers.testWildcard(model.data) });
             if (permissions.hasPermission('edit_wildcards')) {
@@ -729,7 +754,8 @@ class ModelBrowserWrapper {
                             wildcardsBrowser.browser.refresh();
                         });
                     }
-                } });
+                    // TODO: Only ask once for the multi-set rather than once per each
+                }, can_multi: true });
             }
             let raw = model.data.raw;
             detail_list.push(escapeHtml(raw).trim().replaceAll('\n', '').replaceAll('<br>', '<span class="browser-details-list-entry-text-separator">, </span>'));
@@ -783,7 +809,7 @@ class ModelBrowserWrapper {
                 buttons.push({ label: 'View Raw Header', onclick: () => viewRawHeader(model.data, this) });
             }
             if (model.data.local && permissions.hasPermission('delete_models')) {
-                buttons.push({ label: 'Delete Model', onclick: () => deleteModel(model.data, this) });
+                buttons.push({ label: 'Delete Model', onclick: () => deleteModel(model.data, this), can_multi: true });
             }
             if (model.data.local && permissions.hasPermission('delete_models')) {
                 buttons.push({ label: 'Rename Model', onclick: () => renameModel(model.data, this) });
@@ -963,8 +989,8 @@ function monitorPromptChangeForEmbed(promptText, type) {
     if (countNew != countOld || (countNew > 0 && countEndsNew != countEndsOld)) {
         sdEmbedBrowser.rebuildSelectedClasses();
     }
-    let countNewWc = promptText.split(`<wildcard`).length - 1;
-    let countOldWc = last.split(`<wildcard`).length - 1;
+    let countNewWc = (promptText.split(`<wildcard`).length - 1) + (promptText.split(`<wc`).length - 1);
+    let countOldWc = (last.split(`<wildcard`).length - 1) + (last.split(`<wc`).length - 1);
     if (countNewWc != countOldWc || (countNewWc > 0 && countEndsNew != countEndsOld)) {
         wildcardsBrowser.rebuildSelectedClasses();
     }
@@ -1029,6 +1055,7 @@ function trt_modal_create() {
     let rangeSelect = getRequiredElementById('tensorrt_aspect_range');
     let batchSize = getRequiredElementById('tensorrt_batch_size');
     let maxBatch = getRequiredElementById('tensorrt_max_batch_size');
+    let contextLen = getRequiredElementById('tensorrt_context');
     let createButton = getRequiredElementById('trt_create_button');
     let resultBox = getRequiredElementById('tensorrt_create_result_box');
     let data = {
@@ -1036,7 +1063,8 @@ function trt_modal_create() {
         'aspect': aspectSelect.value,
         'aspectRange': rangeSelect.value,
         'optBatch': batchSize.value,
-        'maxBatch': maxBatch.value
+        'maxBatch': maxBatch.value,
+        'contextLen': contextLen.value
     };
     createButton.disabled = true;
     resultBox.innerText = 'Creating TensorRT engine, please wait...';
@@ -1176,10 +1204,18 @@ class CurrentModelHelper {
             $('#nunchaku_installer').modal('show');
             return true;
         }
-        let imageVidToggler = document.getElementById('input_group_content_imagetovideo_toggle');
-        let isImageVidToggled = imageVidToggler && imageVidToggler.checked;
-        let videoModel = isImageVidToggled ? document.getElementById('input_videomodel')?.value : '';
-        if ((this.curSpecialFormat == 'gguf' || videoModel.endsWith('.gguf')) && !currentBackendFeatureSet.includes('gguf') && !localStorage.getItem('hide_gguf_check')) {
+        let hasGGUFModel = false;
+        for (let param of gen_param_types) {
+            if (param.type != 'model') {
+                continue;
+            }
+            let modelInput = document.getElementById(`input_${param.id}`);
+            if (isParamEnabled(param) && modelInput?.value.endsWith('.gguf')) {
+                hasGGUFModel = true;
+                break;
+            }
+        }
+        if ((this.curSpecialFormat == 'gguf' || hasGGUFModel) && !currentBackendFeatureSet.includes('gguf') && !localStorage.getItem('hide_gguf_check')) {
             $('#gguf_installer').modal('show');
             return true;
         }

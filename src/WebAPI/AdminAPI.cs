@@ -11,6 +11,7 @@ using SwarmUI.Utils;
 using System.IO;
 using System.Net.Http;
 using System.Reflection;
+using System.Runtime.InteropServices;
 
 namespace SwarmUI.WebAPI;
 
@@ -50,6 +51,7 @@ public static class AdminAPI
         API.RegisterAPICall(AdminEditRole, true, Permissions.ConfigureRoles);
         API.RegisterAPICall(AdminDeleteRole, true, Permissions.ConfigureRoles);
         API.RegisterAPICall(AdminListPermissions, false, Permissions.ConfigureRoles);
+        API.RegisterAPICall(InstallDotnetUpdate, true, Permissions.Install);
     }
 
     /// <summary>Async actions that check for backend updates, and add them to the JObject (within the lock!).</summary>
@@ -320,7 +322,7 @@ public static class AdminAPI
         {
             return new JObject() { ["error"] = "Invalid log level type specified." };
         }
-        Logs.Info($"User {session.User.UserID} is submitted logs above level {level} to pastebin...");
+        Logs.Info($"User {session.User.UserID} is submitting logs above level {level} to pastebin...");
         List<(Logs.LogLevel, Logs.LogMessage)> messages = [];
         for (int i = (int)level; i < Logs.Trackers.Length; i++)
         {
@@ -580,12 +582,11 @@ public static class AdminAPI
         return new JObject() { ["users"] = list };
     }
 
-    public static async Task<JObject> GetUpdatesDataFor(string folder, bool nullOnNone, bool tryPatches = true, string headTarget = null)
+    public static async Task<JObject> GetUpdatesDataFor(string folder, bool nullOnNone, bool tryPatches = true, string latestTarget = null)
     {
-        headTarget ??= "HEAD";
         string fetchResult = await Utilities.RunGitProcess("fetch", folder);
         Logs.Debug($"Git fetch of {folder} says: {fetchResult}");
-        string commitRaw = (await Utilities.RunGitProcess($"rev-list {headTarget}..origin", folder)).Trim().Replace("\r", "");
+        string commitRaw = (await Utilities.RunGitProcess($"rev-list HEAD..{(latestTarget ?? "origin")}", folder)).Trim().Replace("\r", "");
         string[] commits;
         if (commitRaw.StartsWith("fatal: "))
         {
@@ -594,7 +595,7 @@ public static class AdminAPI
             {
                 string autofixme = await Utilities.RunGitProcess("remote set-head origin --auto", folder);
                 Logs.Debug($"Autofix for git rev-list failure: {autofixme}");
-                return await GetUpdatesDataFor(folder, nullOnNone, false, headTarget);
+                return await GetUpdatesDataFor(folder, nullOnNone, false, latestTarget);
             }
             commits = ["(unknown revisions, see error in logs. Use Aggressive Update to auto-resolve most issues.)"];
             return new JObject() { ["count"] = 1, ["preview"] = JArray.FromObject(commits) };
@@ -731,6 +732,8 @@ public static class AdminAPI
             Logs.Debug($"Aggressive add: {addAny}");
             string reset = await Utilities.RunGitProcess("reset --hard HEAD", folder);
             Logs.Debug($"Aggressive reset: {reset}");
+            string clean = await Utilities.RunGitProcess("clean -fd", folder);
+            Logs.Debug($"Aggressive clean: {clean}");
             string repull = await Utilities.RunGitProcess("pull --autostash", folder); // Should already be good, but make sure
             Logs.Debug($"Aggressive repull: {repull}");
         }
@@ -757,6 +760,8 @@ public static class AdminAPI
         {
             string resetBack = await Utilities.RunGitProcess($"reset --hard {targetCommit}", folder);
             Logs.Debug($"Reset back to target commit {targetCommit}: {resetBack}");
+            string cleanBack = await Utilities.RunGitProcess("clean -fd", folder);
+            Logs.Debug($"Clean after reset to target commit: {cleanBack}");
         }
         string localHash = (await Utilities.RunGitProcess("rev-parse HEAD", folder)).Trim();
         Logs.Debug($"Updater: prior hash was {priorHash}, new hash is {localHash}");
@@ -1354,5 +1359,17 @@ public static class AdminAPI
             };
         }
         return new JObject() { ["permissions"] = permissions, ["ordered"] = JArray.FromObject(Permissions.OrderedKeys) };
+    }
+
+    public static async Task<JObject> InstallDotnetUpdate(Session session)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return new JObject() { ["error"] = "This API route is only valid on Windows." };
+        }
+        string output = await Utilities.QuickRunProcess("winget", ["install", "Microsoft.DotNet.SDK.10", "--accept-source-agreements", "--accept-package-agreements"]);
+        Logs.Info($"Winget output: {output}");
+        Program.RequestRestart();
+        return new JObject() { ["success"] = true };
     }
 }

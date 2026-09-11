@@ -62,6 +62,7 @@ class WildcardHelpers {
             this.modalMayClose = false;
         });
         this.processContents();
+        textPromptAddKeydownHandler(this.contentsElem);
     }
 
     /** Applies a new wildcard list from the server. */
@@ -155,6 +156,7 @@ class WildcardHelpers {
             lines = [];
             lines.push(...getTextContent(this.contentsElem).trim().split('\n'));
         }
+        lines = lines.flatMap(line => line.split('\n'));
         if (lines.length == 0) {
             lines = [''];
         }
@@ -182,7 +184,7 @@ class WildcardHelpers {
                 clazz += ' wc_line_comment';
             }
             charCount += trimLine.length == 0 ? 1 : line.length;
-            html += `<div class="${clazz}">${trimLine.length == 0 ? '\u2009' : line}</div>`;
+            html += `<div class="${clazz}">${trimLine.length == 0 ? '\u2009' : escapeHtmlNoBr(line)}</div>`;
             if (i < lines.length - 1) {
                 charCount++;
                 html += '<div class="wc_line_spacer">\\</div>';
@@ -335,7 +337,7 @@ class WildcardHelpers {
 
     /** Small util to match a wildcard syntax entry in a prompt. */
     matchWildcard(prompt, wildcard) {
-        let matcher = new RegExp(`<(wildcard(?:\\[\\d+(?:-\\d+)?\\])?):${regexEscape(wildcard)}>`, 'g');
+        let matcher = new RegExp(`<((?:wildcard|wc)(?:\\[\\d+(?:-\\d+)?\\])?):${regexEscape(wildcard)}>`, 'g');
         return prompt.match(matcher);
     }
 
@@ -348,18 +350,18 @@ class WildcardHelpers {
         }
         let prefix = promptBox.value.substring(0, cursorPos);
         let suffix = promptBox.value.substring(cursorPos);
-        let trimmed = prefix.trim();
+        let trimmed = trimSpaces(prefix);
         let match = this.matchWildcard(trimmed, model.name);
         if (match && match.length > 0) {
             let last = match[match.length - 1];
-            if (trimmed.endsWith(last.trim())) {
-                promptBox.value = (trimmed.substring(0, trimmed.length - last.length).trim() + ' ' + suffix).trim();
+            if (trimmed.endsWith(trimSpaces(last))) {
+                promptBox.value = (trimSpaces(trimmed.substring(0, trimmed.length - last.length)) + ' ' + suffix).trim();
                 triggerChangeFor(promptBox);
                 return;
             }
         }
         let wildcardText = `<wildcard:${model.name}>`;
-        promptBox.value = `${prefix.trim()} ${wildcardText} ${suffix.trim()}`.trim();
+        promptBox.value = `${trimSpaces(prefix)} ${wildcardText} ${trimSpaces(suffix)}`.trim();
         promptBox.selectionStart = cursorPos + wildcardText.length + 1;
         promptBox.selectionEnd = cursorPos + wildcardText.length + 1;
         promptBox.focus();

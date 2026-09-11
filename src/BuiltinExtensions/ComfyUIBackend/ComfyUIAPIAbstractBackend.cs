@@ -180,8 +180,11 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
         if (CanIdle)
         {
             Idler.Backend = this;
-            using CancellationTokenSource cancel = Utilities.TimedCancel(TimeSpan.FromMinutes(1));
-            Idler.ValidateCall = () => SendGet<JObject>("object_info", cancel.Token).Wait();
+            Idler.ValidateCall = () =>
+            {
+                using CancellationTokenSource cancel = Utilities.TimedCancel(TimeSpan.FromMinutes(1));
+                SendGet<JObject>("features", cancel.Token).Wait();
+            };
             Idler.Start();
         }
     }
@@ -240,7 +243,7 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
         metadataObj.Remove("exactbackendid");
         metadataObj["is_preview"] = true;
         metadataObj["preview_notice"] = "Image is not done generating";
-        string previewMetadata = T2IParamInput.MetadataToString(new JObject() { ["sui_image_params"] = metadataObj });
+        string previewMetadata = T2IParamInput.MetadataToString(new JObject() { ["sui_image_params"] = metadataObj, ["sui_extra_data"] = user_input.BuildExtraDataJObject() });
         int expectedNodes = workflowJson.Count;
         string id = null;
         ClientWebSocket socket = null;
@@ -303,11 +306,12 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
         float curPercent = 0;
         void yieldProgressUpdate()
         {
+            Logs.Verbose($"Progress [{batchId}]: {nodesDone}/{expectedNodes}, curPercent={curPercent * 100:00.0}");
             JObject toSend = new()
             {
                 ["batch_index"] = batchId,
                 ["request_id"] = $"{user_input.UserRequestId}",
-                ["overall_percent"] = (nodesDone + curPercent) / (float)expectedNodes,
+                ["overall_percent"] = (nodesDone + curPercent) / (float)(expectedNodes + 1),
                 ["current_percent"] = curPercent
             };
             if (previewMetadata is not null)
@@ -422,7 +426,14 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
                                 currentNode = nodeId;
                                 goto case "execution_cached";
                             case "execution_cached":
-                                nodesDone++;
+                                if (json.Value<JObject>("data").TryGetValue("nodes", out JToken nodes) && nodes is JArray nodeArr)
+                                {
+                                    nodesDone += nodeArr.Count;
+                                }
+                                else
+                                {
+                                    nodesDone++;
+                                }
                                 curPercent = 0;
                                 hasInterrupted = false;
                                 yieldProgressUpdate();
@@ -437,7 +448,7 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
                                 break;
                             case "executed":
                                 nodesDone = expectedNodes;
-                                curPercent = 0;
+                                curPercent = 1;
                                 yieldProgressUpdate();
                                 break;
                             case "execution_start":
@@ -516,7 +527,7 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
                                     ["comfy_index"] = index
                                 };
                             }
-                            takeOutput(new T2IEngine.ImageOutput() { File = new Image(output[preBytes..], mediaType), IsReal = isReal, GenTimeMS = firstStep == 0 ? -1 : (Environment.TickCount64 - firstStep) });
+                            takeOutput(new T2IEngine.ImageOutput() { File = new Image(output[preBytes..], mediaType), IsReal = isReal, BackendInternalHint = currentNode, GenTimeMS = firstStep == 0 ? -1 : (Environment.TickCount64 - firstStep) });
                         }
                         else
                         {
@@ -669,7 +680,19 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
                             Program.RequestRestart();
                         }
                     }
-                    throw new SwarmReadableErrorException($"ComfyUI execution error: {actualMessage}{note}");
+                    JObject errData = msg[1] as JObject;
+                    string context = "";
+                    if (errData.TryGetValue("node_id", out JToken nodeId) && !string.IsNullOrWhiteSpace($"{nodeId}"))
+                    {
+                        string nodeType = $"{errData["node_type"]}";
+                        context += string.IsNullOrWhiteSpace(nodeType) ? $" (Node {nodeId})" : $" (Node {nodeId}: {nodeType})";
+                    }
+                    T2IModel model = userInput.Get(T2IParamTypes.Model);
+                    if (model is not null)
+                    {
+                        context += $" (Model={model.Name})";
+                    }
+                    throw new SwarmReadableErrorException($"ComfyUI execution error{context}: {actualMessage}{note}");
                 }
             }
         }
@@ -794,7 +817,7 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
     public static string CreateWorkflow(T2IParamInput user_input, Func<string, string> initImageFixer, string ModelFolderFormat = null, HashSet<string> features = null)
     {
         // note: gently break any standard embed with a space, *require* swarm format embeds, as comfy's raw syntax has unwanted behaviors
-        user_input.ProcessPromptEmbeds(x => $" embedding:{x.Replace("/", ModelFolderFormat)} ", p => p.Replace("embedding:", "embedding :", StringComparison.OrdinalIgnoreCase));
+        user_input.ProcessPromptEmbeds(x => $"<embed:{x}>", p => p.Replace("embedding:", "embedding :", StringComparison.OrdinalIgnoreCase));
         string workflow = GetRawWorkflowFrom(user_input);
         if (workflow is not null && !user_input.Get(T2IParamTypes.ControlNetPreviewOnly))
         {
@@ -858,7 +881,6 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
                 }
                 string filled = tagBasic switch
                 {
-                    "stability_api_key" => user_input.SourceSession.User.GetGenericData("stability_api", "key") ?? throw new SwarmUserErrorException("Stability API key not set - please go to the User tab to set it."),
                     "prompt" => user_input.Get(T2IParamTypes.Prompt),
                     "negative_prompt" => user_input.Get(T2IParamTypes.NegativePrompt),
                     "seed" => $"{fixSeed(user_input.Get(T2IParamTypes.Seed)) + (int.TryParse(tagExtra, out int add) ? add : 0)}",
@@ -1045,6 +1067,7 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
         {
             input.Set(T2IParamTypes.Steps, 0);
             input.Set(T2IParamTypes.DoNotSave, true);
+            input.Set(T2IParamTypes.JustLoadModel, true);
         }
         else
         {
@@ -1080,6 +1103,7 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
             copyParam(T2IParamTypes.QwenModel);
             copyParam(T2IParamTypes.MistralModel);
             copyParam(T2IParamTypes.GemmaModel);
+            copyParam(T2IParamTypes.GptOssModel);
         }
         WorkflowGenerator wg = new() { UserInput = input, ModelFolderFormat = ModelFolderFormat, Features = [.. SupportedFeatures] };
         JObject workflow = wg.Generate();

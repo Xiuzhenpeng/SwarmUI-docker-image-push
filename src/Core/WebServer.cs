@@ -614,9 +614,6 @@ public class WebServer
             }
             return;
         }
-        context.Response.ContentType = contentType;
-        context.Response.StatusCode = 200;
-        context.Response.ContentLength = data.Length;
         if (contentType.StartsWith("application/") || contentType.StartsWith("text/"))
         {
             context.Response.Headers.CacheControl = "private, max-age=2";
@@ -625,8 +622,7 @@ public class WebServer
         {
             context.Response.Headers.CacheControl = $"private, max-age={Program.ServerSettings.Network.OutputCacheSeconds}";
         }
-        await context.Response.Body.WriteAsync(data, Program.GlobalProgramCancel);
-        await context.Response.CompleteAsync();
+        await Results.Bytes(data, contentType, enableRangeProcessing: true).ExecuteAsync(context);
     }
 
     /// <summary>Web route for viewing special images (eg model icons).</summary>
@@ -654,6 +650,17 @@ public class WebServer
             context.Response.Headers.CacheControl = $"private, max-age=2";
             await context.Response.Body.WriteAsync(img.RawData, Program.GlobalProgramCancel);
             await context.Response.CompleteAsync();
+        }
+        if (subtype == "Preset")
+        {
+            T2IPreset preset = user.GetPreset(name);
+            if (preset is not null && (preset.PreviewImage?.StartsWithFast("data:") ?? false))
+            {
+                await yieldResult(preset.PreviewImage);
+                return;
+            }
+            await context.YieldJsonOutput(null, 404, Utilities.ErrorObj("404, file not found.", "file_not_found"));
+            return;
         }
         if (!user.IsAllowedModel(name))
         {

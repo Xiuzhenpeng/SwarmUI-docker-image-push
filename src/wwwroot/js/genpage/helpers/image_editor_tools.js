@@ -97,8 +97,11 @@ class ImageEditorTool {
         return false;
     }
 
-    onContextMenu(e) {
+    onRightMouseDown(e) {
         return false;
+    }
+
+    onBeforeHistoryUndo() {
     }
 
     onLayerChanged(oldLayer, newLayer) {
@@ -601,6 +604,7 @@ class ImageEditorToolSelect extends ImageEditorTool {
         </div>`;
         let makeRegionButton = `<div class="image-editor-tool-block">
             <button class="basic-button id-make-region">Make Region</button>
+            <button class="basic-button id-make-ideogram">Make Ideogram JSON</button>
         </div>`;
         this.configDiv.innerHTML = copyDropdown + makeRegionButton;
         this.copyModeSelect = this.configDiv.querySelector('.id-copy-mode');
@@ -615,6 +619,18 @@ class ImageEditorToolSelect extends ImageEditorTool {
                     return Math.round(v * 1000) / 1000;
                 }
                 let regionText = `\n<region:${roundClean(this.editor.selectX / this.editor.realWidth)},${roundClean(this.editor.selectY / this.editor.realHeight)},${roundClean(this.editor.selectWidth / this.editor.realWidth)},${roundClean(this.editor.selectHeight / this.editor.realHeight)}>`;
+                promptBox.value += regionText;
+                triggerChangeFor(promptBox);
+            }
+        });
+        this.configDiv.querySelector('.id-make-ideogram').addEventListener('click', () => {
+            if (this.editor.hasSelection) {
+                // TODO: This should create a new pseudo-layer that highlights a simple box and render the region text inside of it
+                let promptBox = getRequiredElementById('alt_prompt_textbox');
+                function roundClean(v) {
+                    return Math.max(0, Math.min(1000, Math.round(v * 1000)));
+                }
+                let regionText = `\n{"type": "obj", "bbox": [${roundClean(this.editor.selectY / this.editor.realHeight)}, ${roundClean(this.editor.selectX / this.editor.realWidth)}, ${roundClean((this.editor.selectY + this.editor.selectHeight) / this.editor.realHeight)}, ${roundClean((this.editor.selectX + this.editor.selectWidth) / this.editor.realWidth)}], "desc": "My New Element"}`;
                 promptBox.value += regionText;
                 triggerChangeFor(promptBox);
             }
@@ -1525,6 +1541,34 @@ class ImageEditorToolSam2Points extends ImageEditorToolSam2Base {
         // TODO: This map is a pretty iffy way to do things, probably stray persistence.
         this.layerPoints = new Map();
         this.pendingMaskUpdate = false;
+        this.lastAppliedPoints = { positive: [], negative: [] };
+    }
+
+    flushPointsUndoHistory() {
+        for (let entry of this.editor.editHistory) {
+            delete entry.data.onUndo;
+        }
+    }
+
+    setInactive() {
+        super.setInactive();
+        this.layerPoints = new Map();
+        this.lastAppliedPoints = { positive: [], negative: [] };
+        this.activeRequestId = ++this.requestSerial;
+        this.maskRequestInFlight = false;
+        this.pendingMaskUpdate = false;
+        this.flushPointsUndoHistory();
+    }
+
+    onBeforeHistoryUndo() {
+        this.activeRequestId = ++this.requestSerial;
+        this.maskRequestInFlight = false;
+        this.pendingMaskUpdate = false;
+    }
+
+    onLayerChanged(oldLayer, newLayer) {
+        super.onLayerChanged(oldLayer, newLayer);
+        this.lastAppliedPoints = { positive: [], negative: [] };
     }
 
     getActivePoints() {
@@ -1557,7 +1601,9 @@ class ImageEditorToolSam2Points extends ImageEditorToolSam2Base {
         let points = this.getActivePoints();
         points.positive = [];
         points.negative = [];
+        this.lastAppliedPoints = { positive: [], negative: [] };
         this.clearMaskAndEndRequest();
+        this.flushPointsUndoHistory();
     }
 
     drawPoint(ctx, x, y, fillColor, showX) {
@@ -1594,8 +1640,7 @@ class ImageEditorToolSam2Points extends ImageEditorToolSam2Base {
         }
     }
 
-    onContextMenu(e) {
-        e.preventDefault();
+    onRightMouseDown(e) {
         return true;
     }
 
@@ -1690,6 +1735,8 @@ class ImageEditorToolSam2Points extends ImageEditorToolSam2Base {
         if (points.negative.length > 0) {
             genData['samnegativepoints'] = JSON.stringify(points.negative.map(p => ({ x: p.x - offX, y: p.y - offY })));
         }
+        let previousPoints = { positive: [...this.lastAppliedPoints.positive], negative: [...this.lastAppliedPoints.negative] };
+        let thisRequestPoints = { positive: [...points.positive], negative: [...points.negative] };
         makeWSRequestT2I('GenerateText2ImageWS', genData, data => {
             if (requestId != this.activeRequestId || !data.image) {
                 return;
@@ -1704,6 +1751,16 @@ class ImageEditorToolSam2Points extends ImageEditorToolSam2Base {
                     return;
                 }
                 this.applyMaskResult(newImg);
+                let maskLayer = this.editor.activeLayer;
+                let history = this.editor.editHistory;
+                if (history.length > 0) {
+                    let capturedPrevious = previousPoints;
+                    history.at(-1).data.onUndo = () => {
+                        this.layerPoints.set(maskLayer.id, { positive: [...capturedPrevious.positive], negative: [...capturedPrevious.negative] });
+                        this.lastAppliedPoints = capturedPrevious;
+                    };
+                }
+                this.lastAppliedPoints = thisRequestPoints;
                 this.editor.redraw();
                 this.finishMaskUpdate(requestId);
             };

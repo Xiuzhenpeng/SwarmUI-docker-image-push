@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Linq;
 using System.Text;
 using Newtonsoft.Json.Linq;
@@ -48,7 +49,17 @@ public class WGNodeData(JArray _path, WorkflowGenerator _gen, string _dataType, 
     public int? Frames = null;
 
     /// <summary>The frames per second of a video, if known and valid.</summary>
-    public int? FPS = null;
+    public JToken FPS = null;
+
+    /// <summary>Returns the FPS as an int, or null if it is a node-ref or unset.</summary>
+    public int? GetRawFPS()
+    {
+        if (FPS is JValue v && v.Type == JTokenType.Integer)
+        {
+            return v.Value<int>();
+        }
+        return null;
+    }
 
     /// <summary>If this is a video data object, and audio is separate but tracked, this is the audio associated.</summary>
     public WGNodeData AttachedAudio = null;
@@ -126,7 +137,7 @@ public class WGNodeData(JArray _path, WorkflowGenerator _gen, string _dataType, 
                 }, id);
             }
             // LTX-2 VAE is relatively fine, but gets intense. Adding some temporal tiling chills out the VRAM hit without visual difference, so on by default
-            else if ((Gen.IsLTXV2()) && UserInput.Get(T2IParamTypes.ModelSpecificEnhancements, true))
+            else if (Gen.IsLTXV2() && UserInput.Get(T2IParamTypes.ModelSpecificEnhancements, true))
             {
                 decoded = Gen.CreateNode("VAEDecodeTiled", new JObject()
                 {
@@ -138,6 +149,19 @@ public class WGNodeData(JArray _path, WorkflowGenerator _gen, string _dataType, 
                     ["temporal_overlap"] = 16
                 }, id);
             }
+            // similar to LTX - it's fine but gets intense with scale.
+            else if (Gen.IsMiniMaxH3() && UserInput.Get(T2IParamTypes.ModelSpecificEnhancements, true))
+            {
+                decoded = Gen.CreateNode("VAEDecodeTiled", new JObject()
+                {
+                    ["vae"] = vae.Path,
+                    ["samples"] = Path,
+                    ["tile_size"] = 256,
+                    ["overlap"] = 64,
+                    ["temporal_size"] = 9999, // Can't currently temporal tile
+                    ["temporal_overlap"] = 8
+                }, id);
+            }
             else
             {
                 decoded = Gen.CreateNode("VAEDecode", new JObject()
@@ -146,11 +170,20 @@ public class WGNodeData(JArray _path, WorkflowGenerator _gen, string _dataType, 
                     ["samples"] = Path
                 }, id);
             }
+            if (Gen.IsMiniMaxH3() && Frames == 2)
+            {
+                decoded = Gen.CreateNode("ImageFromBatch", new JObject()
+                {
+                    ["image"] = WorkflowGenerator.NodePath(decoded, 0),
+                    ["batch_index"] = 0,
+                    ["length"] = 1
+                });
+            }
             return WithPath([decoded, 0], DataType == DT_LATENT_VIDEO ? DT_VIDEO : DT_IMAGE, vae.Compat);
         }
         if (DataType == DT_LATENT_AUDIOVIDEO)
         {
-            if (IsCompat(T2IModelClassSorter.CompatLtxv2))
+            if (Compat?.HasJointAVLatents ?? false)
             {
                 JArray vidRoute, audRoute;
                 if (sourceType == "LTXVConcatAVLatent")
@@ -195,20 +228,44 @@ public class WGNodeData(JArray _path, WorkflowGenerator _gen, string _dataType, 
             {
                 return WithPath((JArray)srcInputs["audio"], DT_LATENT_AUDIO);
             }
+            string decoded;
             if (IsCompat(T2IModelClassSorter.CompatLtxv2))
             {
-                string audioDecoded = Gen.CreateNode("LTXVAudioVAEDecode", new JObject()
+                decoded = Gen.CreateNode("LTXVAudioVAEDecode", new JObject()
                 {
                     ["audio_vae"] = vae.Path,
                     ["samples"] = Path
                 }, id);
-                return WithPath([audioDecoded, 0], DT_AUDIO, vae.Compat);
             }
-            string decoded = Gen.CreateNode("VAEDecodeAudio", new JObject()
+            // NOTE: decode audio tiled does not work for some models (eg H3) so for now whitelist which models are valid
+            else if (UserInput.TryGet(T2IParamTypes.VAETileSize, out _) && Gen.IsMiniMaxMusic3())
             {
-                ["vae"] = vae.Path,
-                ["samples"] = Path
-            }, id);
+                decoded = Gen.CreateNode("VAEDecodeAudioTiled", new JObject()
+                {
+                    ["vae"] = vae.Path,
+                    ["samples"] = Path,
+                    ["tile_size"] = UserInput.Get(T2IParamTypes.VAETileSize, 256),
+                    ["overlap"] = UserInput.Get(T2IParamTypes.VAETileOverlap, 64)
+                }, id);
+            }
+            else if (Gen.IsMiniMaxMusic3())
+            {
+                decoded = Gen.CreateNode("VAEDecodeAudioTiled", new JObject()
+                {
+                    ["vae"] = vae.Path,
+                    ["samples"] = Path,
+                    ["tile_size"] = 1536,
+                    ["overlap"] = 64
+                }, id);
+            }
+            else
+            {
+                decoded = Gen.CreateNode("VAEDecodeAudio", new JObject()
+                {
+                    ["vae"] = vae.Path,
+                    ["samples"] = Path
+                }, id);
+            }
             return WithPath([decoded, 0], DT_AUDIO, vae.Compat);
         }
         WGAssert(false, $"Unknown latent data type '{DataType}', cannot decode.");
@@ -329,71 +386,94 @@ public class WGNodeData(JArray _path, WorkflowGenerator _gen, string _dataType, 
         return this;
     }
 
-    /// <summary>Converts this data to a format fit for sampling, generally some form of latent.</summary>
-    public WGNodeData AsSamplingLatent(WGNodeData vae, WGNodeData audioVae)
+    /// <summary>Adds a masked silent prefix and/or suffix to latent audio (does nothing if audio is not latent, or not present, or the relevant parameters are unset).</summary>
+    public WGNodeData WithAudioSilenceMask(WGNodeData vae, WGNodeData audioVae)
     {
-        WGNodeData withAudio = EnsureHasAudioIfNeeded(vae, audioVae);
-        if (withAudio != this)
+        if (!UserInput.TryGet(T2IParamTypes.AudioSilentPrefixDuration, out double prefix))
         {
-            return withAudio.AsSamplingLatent(vae, audioVae);
+            prefix = 0;
         }
-        if (IsLatentData)
+        if (!UserInput.TryGet(T2IParamTypes.AudioSilentSuffixDuration, out double suffix))
         {
-            WGAssert(vae.Compat.ID == Compat.ID, $"Data is compatible with '{Compat}' but provided VAE is compatible with '{vae.Compat}', cannot encode to sampling latent, ensure correctly decoded first.");
+            suffix = 0;
         }
-        if (IsLatentData && AttachedAudio is null)
+        if (audioVae is null || (prefix <= 0 && suffix <= 0))
         {
             return this;
         }
         if (DataType == DT_LATENT_AUDIOVIDEO)
         {
-            return this;
+            WGNodeData result = AsLatentImage(vae).Duplicate();
+            result.AttachedAudio = result.AttachedAudio?.WithAudioSilenceMask(vae, audioVae);
+            return result;
         }
-        if (DataType == DT_LATENT_VIDEO || DataType == DT_LATENT_IMAGE)
+        if (DataType == DT_LATENT_AUDIO)
         {
-            if (vae.IsCompat(T2IModelClassSorter.CompatLtxv2))
+            string node = Gen.CreateNode("SwarmAudioSilentMaskPrefixSuffix", new JObject()
             {
-                JArray target = AttachedAudio.Path;
-                if (AttachedAudio.IsRawMedia) // TODO: When is the correct case to do a solid mask on audio? Any raw audio is *probably* mask-worthy, but...??
+                ["latent"] = Path,
+                ["vae"] = audioVae.Path,
+                ["prefix_duration"] = prefix,
+                ["suffix_duration"] = suffix
+            });
+            return WithPath([node, 0]);
+        }
+        if (AttachedAudio is not null)
+        {
+            WGNodeData result = Duplicate();
+            result.AttachedAudio = AttachedAudio.WithAudioSilenceMask(vae, audioVae);
+            return result;
+        }
+        return this;
+    }
+
+    /// <summary>Converts this data to a format fit for sampling, generally some form of latent.</summary>
+    public WGNodeData AsSamplingLatent(WGNodeData vae, WGNodeData audioVae)
+    {
+        WGNodeData result = EnsureHasAudioIfNeeded(vae, audioVae);
+        if (result != this)
+        {
+            return result.AsSamplingLatent(vae, audioVae);
+        }
+        result = WithAudioSilenceMask(vae, audioVae);
+        if (result.IsLatentData)
+        {
+            WGAssert(vae.Compat.ID == Compat.ID, $"Data is compatible with '{Compat}' but provided VAE is compatible with '{vae.Compat}', cannot encode to sampling latent, ensure correctly decoded first.");
+        }
+        if (result.DataType == DT_LATENT_AUDIO || result.DataType == DT_LATENT_AUDIOVIDEO)
+        {
+            return result;
+        }
+        if (result.IsLatentData && result.AttachedAudio is null)
+        {
+            return result;
+        }
+        if (result.DataType == DT_LATENT_VIDEO || result.DataType == DT_LATENT_IMAGE)
+        {
+            if (vae.Compat?.HasJointAVLatents ?? false)
+            {
+                if (result.AttachedAudio.IsRawMedia) // TODO: When is the correct case to do a solid mask on audio? Any raw audio is *probably* mask-worthy, but...??
                 {
-                    string ensured = Gen.CreateNode("SwarmEnsureAudio", new JObject()
-                    {
-                        ["audio"] = AttachedAudio.Path,
-                        ["target_duration"] = 0.1
-                    });
-                    WGNodeData ensuredNode = AttachedAudio.WithPath([ensured, 0], DT_AUDIO);
-                    WGNodeData audioEncoded = ensuredNode.EncodeToLatent(audioVae);
-                    string mask = Gen.CreateNode("SolidMask", new JObject()
-                    {
-                        ["value"] = 0,
-                        ["width"] = 512,
-                        ["height"] = 512 // TODO: ?
-                    });
-                    string masked = Gen.CreateNode("SetLatentNoiseMask", new JObject()
-                    {
-                        ["samples"] = audioEncoded.Path,
-                        ["mask"] = WorkflowGenerator.NodePath(mask, 0)
-                    });
-                    target = [masked, 0];
+                    result = result.WithMaskedAudio(audioVae);
                 }
                 string concatted = Gen.CreateNode("LTXVConcatAVLatent", new JObject()
                 {
-                    ["video_latent"] = Path,
-                    ["audio_latent"] = target
+                    ["video_latent"] = result.Path,
+                    ["audio_latent"] = result.AttachedAudio.Path
                 });
                 return WithPath([concatted, 0], DT_LATENT_AUDIOVIDEO);
             }
-            return this;
+            return result;
         }
-        if (DataType == DT_IMAGE || DataType == DT_VIDEO)
+        if (result.DataType == DT_IMAGE || result.DataType == DT_VIDEO)
         {
-            return EncodeToLatent(vae);
+            return EncodeToLatent(vae).AsSamplingLatent(vae, audioVae);
         }
-        if (DataType == DT_AUDIO)
+        if (result.DataType == DT_AUDIO)
         {
             return EncodeToLatent(audioVae);
         }
-        WGAssert(false, $"Cannot convert data of type '{DataType}' to sampling latent.");
+        WGAssert(false, $"Cannot convert data of type '{result.DataType}' to sampling latent.");
         return null;
     }
 
@@ -414,7 +494,7 @@ public class WGNodeData(JArray _path, WorkflowGenerator _gen, string _dataType, 
         }
         else if (DataType == DT_LATENT_AUDIOVIDEO)
         {
-            if (IsCompat(T2IModelClassSorter.CompatLtxv2))
+            if (Compat?.HasJointAVLatents ?? false)
             {
                 (string sourceType, JObject srcInputs) = SourceNodeData;
                 if (sourceType == "LTXVConcatAVLatent")
@@ -451,6 +531,43 @@ public class WGNodeData(JArray _path, WorkflowGenerator _gen, string _dataType, 
         }
         WGAssert(false, $"Cannot convert data of type '{DataType}' to raw image/video.");
         return null;
+    }
+
+    /// <summary>Returns a copy of this node data. If it has attached audio, the copy's audio will be masked off.</summary>
+    public WGNodeData WithMaskedAudio(WGNodeData audioVae)
+    {
+        if (AttachedAudio is null)
+        {
+            return this;
+        }
+        WGNodeData audioData = AttachedAudio;
+        JArray target = AttachedAudio.Path;
+        if (AttachedAudio.IsRawMedia) // TODO: When is the correct case to do a solid mask on audio? Any raw audio is *probably* mask-worthy, but...??
+        {
+            string ensured = Gen.CreateNode("SwarmEnsureAudio", new JObject()
+            {
+                ["audio"] = AttachedAudio.Path,
+                ["target_duration"] = 0.1
+            });
+            WGNodeData ensuredNode = AttachedAudio.WithPath([ensured, 0], DT_AUDIO);
+            audioData = ensuredNode.EncodeToLatent(audioVae);
+            target = audioData.Path;
+        }
+        string mask = Gen.CreateNode("SolidMask", new JObject()
+        {
+            ["value"] = 0,
+            ["width"] = 512,
+            ["height"] = 512 // TODO: ?
+        });
+        string masked = Gen.CreateNode("SetLatentNoiseMask", new JObject()
+        {
+            ["samples"] = target,
+            ["mask"] = WorkflowGenerator.NodePath(mask, 0)
+        });
+        target = [masked, 0];
+        WGNodeData result = Duplicate();
+        result.AttachedAudio = audioData.WithPath(target);
+        return result;
     }
 
     /// <summary>Emit nodes to save this data as output. Only works with media or latent media types (latents will be autodecoded using the given VAEs).</summary>

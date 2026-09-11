@@ -665,7 +665,7 @@ textarea, input, select {
     background-color: var(--background-soft);
     text-align: right;
     left: 0;
-    top: calc(100vh - 6rem);
+    bottom: 0;
     font-size: 200%;
     padding-top: 0.5rem;
     padding-right: 1rem;
@@ -707,9 +707,11 @@ textarea, input, select {
 .auto-input.preset-overridden {
     opacity: 0.5;
     cursor: not-allowed;
+    pointer-events: auto;
 }
-.auto-input.preset-overridden input[type="range"] {
+.auto-input.preset-overridden input, .auto-input.preset-overridden select {
     cursor: not-allowed;
+    pointer-events: auto;
 }
 .card-center-container {
     width: fit-content;
@@ -737,6 +739,12 @@ textarea, input, select {
     padding: 0.4rem;
     border: 1px solid var(--shadow);
     min-width: 85px;
+}
+.simple-table tr:nth-child(odd) {
+    background-color: rgba(255, 255, 255, 0.03);
+}
+.simple-table tr:nth-child(even) {
+    background-color: rgba(0, 0, 0, 0.03);
 }
 .translate-block-sm {
     display: inline-block;
@@ -1045,6 +1053,10 @@ textarea, input, select {
     flex: 1;
     min-width: 8px;
 }
+.wide_block {
+    display: block;
+    width: 100%;
+}
 
 
 
@@ -1057,25 +1069,30 @@ textarea, input, select {
 
 
 
-::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-}
-::-webkit-scrollbar-track {
-    background: transparent;
-    transition: all 0.5s;
-}
-::-webkit-scrollbar-thumb {
-    background: rgba(100, 100, 100, 0.5);
-    border-radius: 20px;
-    border: transparent;
-    transition: all 0.5s;
-}
-::-webkit-scrollbar-track:hover {
-    background: rgba(255, 255, 255, 0.05);
-}
-::-webkit-scrollbar-thumb:hover {
-    background: rgba(100, 100, 100, 0.7);
+/* Chrome scrollbar config - blocked from Firefox. */
+@supports not (-moz-appearance: none) {
+    @supports selector(::-webkit-scrollbar-thumb) {
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+            transition: all 0.5s;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(100, 100, 100, 0.5);
+            border-radius: 20px;
+            border: transparent;
+            transition: all 0.5s;
+        }
+        ::-webkit-scrollbar-track:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(100, 100, 100, 0.7);
+        }
+    }
 }
 textarea,
 input,
@@ -1111,6 +1128,12 @@ select {
 }
 .auto-slider-box .auto-slider-number {
     margin-left: auto;
+}
+.auto-video-frames-box .auto-video-frames-seconds-input {
+    margin-left: 0.5rem;
+}
+.auto-video-frames-unit {
+    margin-left: 0.2rem;
 }
 .auto-slider-range-wrapper {
     width: 100%;
@@ -1250,9 +1273,8 @@ input[type="range"]::-moz-range-track {
     left: 0;
     opacity: 0 !important;
 }
-.auto-file:hover+.auto-file-input .basic-button {
-    background-color: var(--button-background-hover);
-    color: var(--button-foreground-hover);
+input[type="file"].auto-file {
+    cursor: initial;
 }
 .input-group .auto-file-label {
     display: block !important;
@@ -1274,4 +1296,34 @@ input[type="range"]::-moz-range-track {
     font-size: smaller;
     color: var(--text-soft);
     word-break: break-all;
+}
+#input_image_browser_modal {
+    z-index: 1100;
+}
+#input_image_browser_modal .modal-dialog {
+    max-width: 90vw;
+    width: 90vw;
+    height: 85vh;
+}
+#input_image_browser_modal .modal-content {
+    height: 100%;
+    width: 100%;
+}
+.input-image-browser-modal-body {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    overflow: hidden;
+}
+.input-image-browser-upload-bar {
+    flex: 0 0 auto;
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid var(--bs-border-color-translucent, rgba(0, 0, 0, 0.175));
+}
+.input-image-browser-container {
+    flex: 1;
+    min-height: 0;
+    height: auto;
 }

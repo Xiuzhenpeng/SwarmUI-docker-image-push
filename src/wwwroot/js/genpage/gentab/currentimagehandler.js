@@ -974,6 +974,12 @@ function setCurrentImage(src, metadata = '', batchId = '', previewGrow = false, 
         return;
     }
     let mediaType = getMediaType(src);
+    if (!metadata && canReparse && (mediaType == 'audio' || mediaType == 'video')) {
+        parseMediaMetadata(src, (data, parsedMetadata) => {
+            setCurrentImage(src, parsedMetadata, batchId, previewGrow, false, false);
+        });
+        return;
+    }
     if ((smoothAdd || !metadata) && canReparse && mediaType == 'image') {
         let image = new Image();
         image.onload = () => {
@@ -1240,9 +1246,6 @@ function setCurrentImage(src, metadata = '', batchId = '', previewGrow = false, 
         imageEditor.setBaseImage(img);
         imageEditor.activate();
     }, '', 'Opens an Image Editor for this image', ['image']);
-    includeButton('Edit Video', () => {
-        videoEditorInterface.open(img);
-    }, '', 'Opens a Video Editor to trim or crop this video', ['video']);
     includeButton('Upscale 2x', () => {
         toDataURL(img.src, (url => {
             let [width, height] = naturalDim();
@@ -1522,6 +1525,11 @@ function imageInputHandler() {
                         setCurrentImage(e.target.result, null);
                     }
                 }
+                reader.readAsDataURL(file);
+            }
+            else if (file.type.startsWith('video/') || file.type.startsWith('audio/')) {
+                let reader = new FileReader();
+                reader.onload = (e) => setCurrentImage(e.target.result);
                 reader.readAsDataURL(file);
             }
             else if (file.name.endsWith('.json') || file.type == 'application/json') {

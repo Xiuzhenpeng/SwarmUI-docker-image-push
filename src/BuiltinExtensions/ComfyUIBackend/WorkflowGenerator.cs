@@ -1014,6 +1014,11 @@ public partial class WorkflowGenerator
             defsampler ??= "res_multistep";
             defscheduler ??= "simple";
         }
+        else if (IsYue2())
+        {
+            defsampler ??= "dpm_2";
+            defscheduler ??= "sgm_uniform";
+        }
         else if (IsAnima())
         {
             defsampler ??= "er_sde";
@@ -1765,6 +1770,11 @@ public partial class WorkflowGenerator
                 VideoFPS ??= 24;
                 Frames = MiniMaxH3AlignFrames(Frames ?? 124);
                 origSrcImg = FixMediaLen();
+                WGNodeData explicitAudio = null;
+                if (g.UserInput.TryGet(T2IParamTypes.VideoAudioInput, out AudioFile _) && g.CurrentMedia?.AttachedAudio?.DataType == WGNodeData.DT_AUDIO)
+                {
+                    explicitAudio = g.CurrentMedia.AttachedAudio;
+                }
                 JArray endFramePath = null;
                 if (VideoEndImage is not null)
                 {
@@ -1786,6 +1796,11 @@ public partial class WorkflowGenerator
                     ["last_frame"] = endFramePath
                 });
                 PosCond = [keyframesNode, 0];
+                if (explicitAudio is not null)
+                {
+                    g.CurrentMedia = g.CurrentMedia.AsLatentImage(Vae);
+                    g.CurrentMedia.AttachedAudio = explicitAudio;
+                }
                 DefaultCFG = 1;
             }
             else if (VideoModel.ModelClass?.CompatClass?.ID == "nvidia-cosmos-1")
@@ -2558,6 +2573,43 @@ public partial class WorkflowGenerator
                 ["top_p"] = 0.9,
                 ["top_k"] = 0,
                 ["min_p"] = 0
+            }, id);
+        }
+        else if (IsYue2())
+        {
+            if (!isPositive)
+            {
+                return FinalPrompt;
+            }
+            string abc = CreateNode("YuE2GenerateABC", new JObject()
+            {
+                ["clip"] = clip,
+                ["style"] = UserInput.Get(T2IParamTypes.Text2AudioStyle, ""),
+                ["lyrics"] = prompt,
+                ["seed"] = UserInput.Get(T2IParamTypes.Seed, 0) + 10,
+                ["mode"] = "full", // TODO: Parameter? ("melody", "none" available) ref https://github.com/multimodal-art-projection/YuE ('none' means skip this node and just load plain text)
+                // TODO: Parameters for these?
+                ["max_abc_tokens"] = 8192,
+                ["temperature"] = 0.7,
+                ["top_p"] = 0.9,
+                ["top_k"] = 30,
+                ["repetition_penalty"] = 1.005,
+                ["penalty_window"] = 100
+            });
+            node = CreateNode("YuE2GenerateMusic", new JObject()
+            {
+                ["clip"] = clip,
+                ["style"] = UserInput.Get(T2IParamTypes.Text2AudioStyle, ""),
+                ["lyrics"] = prompt,
+                ["abc"] = NodePath(abc, 0),
+                ["seed"] = UserInput.Get(T2IParamTypes.Seed, 0) + 20,
+                ["mode"] = "full",
+                ["max_duration"] = Math.Clamp(UserInput.Get(T2IParamTypes.Text2AudioDuration, 300), 0.04, 900),
+                // TODO: Parameters for these?
+                ["temperature"] = 1.0,
+                ["top_p"] = 0.95,
+                ["top_k"] = 100,
+                ["repetition_penalty"] = 1.2
             }, id);
         }
         else if (IsMiniMaxMusic3())

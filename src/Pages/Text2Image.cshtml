@@ -88,6 +88,17 @@
     </div>
 </div>
 
+<!-- Shared by Simple and Generate: keep outside tab panes so inactive tabs cannot hide it. -->
+@WebUtil.ModalHeader("input_image_browser_modal", "Select From Inputs")
+    <div class="modal-body input-image-browser-modal-body">
+        <div id="input_image_browser_upload_container" class="input-image-browser-upload-bar"></div>
+        <div id="input_image_browser_container" class="input-image-browser-container"></div>
+    </div>
+    <div class="modal-footer">
+        <button type="button" class="btn btn-secondary basic-button translate" onclick="$('#input_image_browser_modal').modal('hide')">Cancel</button>
+    </div>
+@WebUtil.ModalFooter()
+
 @section Scripts {
     <script src="js/lib/exif-reader.min.js"></script>
     <script src="js/lib/music-metadata.min.js"></script>
